@@ -10,6 +10,7 @@ import logging
 import re
 import uuid
 from datetime import datetime, timezone
+from pydantic import BaseModel, ValidationError
 
 from src.config import get_settings
 from src.models.attack_chain import AttackChain, PivotStep, SensitiveStore
@@ -28,6 +29,31 @@ def _normalize_score(raw) -> float:
     """Clamp score to [0, 1]. If Gemini returns a 0-10 value, divide by 10."""
     v = float(raw)
     return min(1.0, max(0.0, v / 10.0 if v > 1.0 else v))
+
+
+class _LLMFinalPivotStep(BaseModel):
+    step: int
+    asset: str
+    action: str
+    detail: str
+    mitre: str | None = None
+
+
+class _LLMFinalSensitiveStore(BaseModel):
+    type: str
+    asset: str
+    contents: str
+    credentials_used: str
+
+
+class _LLMFinalAttackChain(BaseModel):
+    entry_point: str
+    pivot_path: list[_LLMFinalPivotStep]
+    reachable_sensitive_stores: list[_LLMFinalSensitiveStore] = []
+    blast_radius_score: float = 0.0
+    blast_radius_summary: str
+    gemini_reasoning: str
+    mitre_techniques: list[str] = []
 
 
 MAX_TOOL_ROUNDS = 8
@@ -63,7 +89,8 @@ When you have enough information, output ONLY raw JSON (no markdown fences, no p
   "blast_radius_summary": "<1-2 sentence plain English exec-readable summary>",
   "gemini_reasoning": "<your full step-by-step red team reasoning>",
   "mitre_techniques": ["T1552.001"]
-}"""
+}
+Important: "credentials_used" must always be a string; if unknown, set it to "unknown" (never null)."""
 
 
 def _sanitize_claim_language(text: str) -> str:
@@ -382,17 +409,11 @@ class LateralAgent:
             function_calls = [p for p in model_content.parts if p.function_call]
 
             if not function_calls:
-                # No tool calls — Gemini has decided it has enough information.
-                # Extract the text response and parse as an attack chain.
-                text = next(
-                    (p.text for p in model_content.parts if hasattr(p, "text") and p.text),
-                    "",
-                )
                 logger.info(
                     f"Finding {finding.finding_id}: Gemini finished after "
                     f"{round_num + 1} round(s)"
                 )
-                return self._parse_attack_chain(text, finding)
+                return await self._generate_structured_final_chain(contents, finding)
 
             # Execute all tool calls and collect responses
             fn_response_parts = []
@@ -427,35 +448,121 @@ class LateralAgent:
             f"Finding {finding.finding_id} hit MAX_TOOL_ROUNDS={MAX_TOOL_ROUNDS}. "
             "Requesting final summary."
         )
-        try:
-            final_config = types.GenerateContentConfig(
-                system_instruction=_SYSTEM_PROMPT,
-                temperature=0.1,
-            )
-            final_response = await self.client.aio.models.generate_content(
-                model=MODEL_NAME,
-                contents=contents,
-                config=final_config,
-            )
-            text = next(
-                (
-                    p.text
-                    for p in final_response.candidates[0].content.parts
-                    if hasattr(p, "text") and p.text
-                ),
-                "",
-            )
-            if self.verbose_llm:
-                logger.debug(
-                    "LLM[%s] final_text=%s",
-                    finding.finding_id,
-                    self._truncate_for_log(text),
-                )
-        except Exception as e:
-            logger.error(f"Final summary call failed for {finding.finding_id}: {e}")
-            return None
+        return await self._generate_structured_final_chain(contents, finding)
 
-        return self._parse_attack_chain(text, finding)
+    async def _generate_structured_final_chain(
+        self,
+        contents,
+        finding: FindingDocument,
+    ) -> AttackChain | None:
+        """
+        Request strict JSON schema output and perform one corrective retry if needed.
+        """
+        from google.genai import types
+
+        config = types.GenerateContentConfig(
+            system_instruction=_SYSTEM_PROMPT,
+            temperature=0.1,
+            response_mime_type="application/json",
+            response_schema=_LLMFinalAttackChain,
+        )
+
+        local_contents = list(contents)
+        last_error = ""
+        for attempt in range(2):
+            try:
+                response = await self.client.aio.models.generate_content(
+                    model=MODEL_NAME,
+                    contents=local_contents,
+                    config=config,
+                )
+            except Exception as e:
+                logger.error(
+                    "Structured final call failed for %s (attempt %d/2): %s",
+                    finding.finding_id,
+                    attempt + 1,
+                    e,
+                )
+                return None
+
+            parsed = getattr(response, "parsed", None)
+            raw_text = getattr(response, "text", "") or ""
+            if self.verbose_llm and raw_text:
+                logger.debug(
+                    "LLM[%s] structured_final_raw=%s",
+                    finding.finding_id,
+                    self._truncate_for_log(raw_text),
+                )
+            try:
+                if parsed is None:
+                    # Some SDK paths may not populate response.parsed; validate manually.
+                    if not raw_text:
+                        raise ValueError("Model returned empty structured response text")
+                    data = _LLMFinalAttackChain.model_validate_json(raw_text)
+                else:
+                    data = _LLMFinalAttackChain.model_validate(parsed)
+                return self._build_attack_chain_from_structured(data, finding)
+            except (ValidationError, ValueError) as e:
+                last_error = str(e)
+                logger.warning(
+                    "Structured output validation failed for %s (attempt %d/2): %s",
+                    finding.finding_id,
+                    attempt + 1,
+                    e,
+                )
+                if attempt == 0:
+                    repair_prompt = (
+                        "Return the same final attack-chain JSON, but fix schema errors exactly. "
+                        "Do not add prose. Ensure every reachable_sensitive_stores[].credentials_used "
+                        "is a non-null string."
+                    )
+                    if raw_text:
+                        repair_prompt += (
+                            f"\nPrevious invalid JSON:\n{raw_text}\nValidation error:\n{last_error}"
+                        )
+                    local_contents.append(
+                        types.Content(
+                            role="user",
+                            parts=[types.Part.from_text(text=repair_prompt)],
+                        )
+                    )
+
+        logger.error(
+            "Structured output failed after repair for %s: %s",
+            finding.finding_id,
+            last_error or "unknown validation error",
+        )
+        return None
+
+    def _build_attack_chain_from_structured(
+        self,
+        data: _LLMFinalAttackChain,
+        finding: FindingDocument,
+    ) -> AttackChain:
+        pivot_path = [PivotStep(**step.model_dump()) for step in data.pivot_path]
+        stores = [SensitiveStore(**store.model_dump()) for store in data.reachable_sensitive_stores]
+        for step in pivot_path:
+            step.detail = _sanitize_claim_language(step.detail)
+        for store in stores:
+            store.contents = _sanitize_claim_language(store.contents)
+        mitre_techniques = _normalize_mitre_techniques(
+            pivot_path=pivot_path,
+            mitre_techniques=data.mitre_techniques,
+            reachable_sensitive_stores=stores,
+        )
+        return AttackChain(
+            engagement_id=finding.engagement_id,
+            chain_id=str(uuid.uuid4()),
+            entry_point_finding_id=finding.finding_id,
+            entry_point=data.entry_point,
+            pivot_path=pivot_path,
+            reachable_sensitive_stores=stores,
+            blast_radius_score=_normalize_score(data.blast_radius_score),
+            blast_radius_summary=_sanitize_claim_language(data.blast_radius_summary),
+            gemini_reasoning=_sanitize_claim_language(data.gemini_reasoning),
+            mitre_techniques=mitre_techniques,
+            discovered_at=datetime.now(timezone.utc),
+        )
 
     async def _dispatch_tool_call(
         self,
