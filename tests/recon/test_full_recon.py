@@ -13,6 +13,7 @@ Run with: pytest tests/test_full_recon.py -v -s
 """
 
 import asyncio
+import pytest
 import json
 import logging
 import os

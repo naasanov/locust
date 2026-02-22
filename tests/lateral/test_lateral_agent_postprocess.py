@@ -1,7 +1,9 @@
 from src.agents.lateral.agent import (
+    LateralAgent,
     _normalize_mitre_techniques,
     _sanitize_claim_language,
 )
+from src.models.finding import Evidence, FindingDocument
 from src.models.attack_chain import PivotStep, SensitiveStore
 
 
@@ -50,3 +52,84 @@ def test_sanitize_claim_language_reduces_overclaims():
     assert "full access" not in sanitized.lower()
     assert "full compromise" not in sanitized.lower()
     assert "authenticated access" in sanitized.lower()
+
+
+def test_parse_attack_chain_rejects_null_credentials_used():
+    finding = FindingDocument(
+        engagement_id="eng-1",
+        asset_id="asset-1",
+        finding_id="finding-1",
+        vulnerability_class="api",
+        title="Swagger exposed",
+        severity="medium",
+        exploitable=True,
+        affected_url="http://localhost:3000/api-docs/swagger.yaml",
+        evidence=Evidence(
+            request="GET /api-docs/swagger.yaml HTTP/1.1",
+            response_snippet="HTTP/1.1 200 OK",
+            status_code=200,
+        ),
+        blast_radius="single_asset",
+    )
+
+    raw = """
+{
+  "entry_point": "http://localhost:3000",
+  "pivot_path": [
+    {"step": 1, "asset": "localhost", "action": "Enumerate", "detail": "Found exposed API docs", "mitre": "T1595"}
+  ],
+  "reachable_sensitive_stores": [
+    {"type": "database", "asset": "localhost:3306", "contents": "juice_db", "credentials_used": null}
+  ],
+  "blast_radius_score": 0.5,
+  "blast_radius_summary": "Potential impact to backend data stores.",
+  "gemini_reasoning": "Observed sensitive services.",
+  "mitre_techniques": ["T1595"]
+}
+"""
+
+    agent = LateralAgent.__new__(LateralAgent)
+    chain = agent._parse_attack_chain(raw, finding)
+
+    assert chain is None
+
+
+def test_parse_attack_chain_accepts_string_credentials_used():
+    finding = FindingDocument(
+        engagement_id="eng-1",
+        asset_id="asset-1",
+        finding_id="finding-1",
+        vulnerability_class="api",
+        title="Swagger exposed",
+        severity="medium",
+        exploitable=True,
+        affected_url="http://localhost:3000/api-docs/swagger.yaml",
+        evidence=Evidence(
+            request="GET /api-docs/swagger.yaml HTTP/1.1",
+            response_snippet="HTTP/1.1 200 OK",
+            status_code=200,
+        ),
+        blast_radius="single_asset",
+    )
+
+    raw = """
+{
+    "entry_point": "http://localhost:3000",
+    "pivot_path": [
+    {"step": 1, "asset": "localhost", "action": "Enumerate", "detail": "Found exposed API docs", "mitre": "T1595"}
+  ],
+  "reachable_sensitive_stores": [
+    {"type": "database", "asset": "localhost:3306", "contents": "juice_db", "credentials_used": "unknown"}
+  ],
+  "blast_radius_score": 0.5,
+  "blast_radius_summary": "Potential impact to backend data stores.",
+  "gemini_reasoning": "Observed sensitive services.",
+  "mitre_techniques": ["T1595"]
+}
+"""
+
+    agent = LateralAgent.__new__(LateralAgent)
+    chain = agent._parse_attack_chain(raw, finding)
+
+    assert chain is not None
+    assert chain.reachable_sensitive_stores[0].credentials_used == "unknown"
