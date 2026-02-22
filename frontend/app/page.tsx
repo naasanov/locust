@@ -26,7 +26,16 @@ type Stage = "search" | "form" | "loading" | "results";
 type ResultTab = "recon" | "exploit";
 
 const API_BASE = process.env.NEXT_PUBLIC_API || "http://localhost:8000";
-const WS_BASE = process.env.NEXT_PUBLIC_WS || API_BASE.replace(/^http/, "ws");
+const RAW_WS_BASE = process.env.NEXT_PUBLIC_WS || API_BASE.replace(/^http/, "ws");
+
+function resolveWsBase(raw: string): string {
+  // Browsers block ws:// from https:// pages (mixed content), so force wss://.
+  if (typeof window !== "undefined" && window.location.protocol === "https:") {
+    if (raw.startsWith("ws://")) return raw.replace(/^ws:\/\//, "wss://");
+    if (raw.startsWith("http://")) return raw.replace(/^http:\/\//, "wss://");
+  }
+  return raw;
+}
 
 const LOCUST_COUNT = 22;
 const SWARM = Array.from({ length: LOCUST_COUNT }, (_, i) => ({
@@ -544,7 +553,7 @@ export default function Home() {
     setStage("loading");
     setLoadingPhase(0);
 
-    const ws = new WebSocket(`${WS_BASE}/ws/live`);
+    const ws = new WebSocket(`${resolveWsBase(RAW_WS_BASE)}/ws/live`);
     wsRef.current = ws;
     setWsClient(ws);
 
@@ -1107,9 +1116,17 @@ export default function Home() {
                                   {vuln.title}
                                 </div>
                                 {vuln.gemini_reasoning && (
-                                  <div className="text-xs text-muted-foreground mt-1 font-mono">
-                                    {vuln.gemini_reasoning}
-                                  </div>
+                                  <details className="mt-1 group">
+                                    <summary className="list-none cursor-pointer inline-flex items-center gap-1.5 font-mono text-[11px] text-primary/80 hover:text-primary transition-colors">
+                                      <span className="group-open:rotate-90 transition-transform duration-150">
+                                        ▶
+                                      </span>
+                                      Gemini Summary
+                                    </summary>
+                                    <div className="mt-2 text-xs text-muted-foreground font-mono leading-relaxed border-l border-border pl-3">
+                                      {vuln.gemini_reasoning}
+                                    </div>
+                                  </details>
                                 )}
                               </td>
                               <td className="px-4 py-3 font-mono text-sm text-foreground">
