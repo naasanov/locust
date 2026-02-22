@@ -139,43 +139,93 @@ function summarizeEvent(
   name: string,
   payload: Record<string, unknown>,
 ): string {
+  if (name === "cycle_complete") return "";
+  if (name.endsWith("_result")) return "";
+  if (name.endsWith("_complete")) return "";
+
+  const reconStep = String(payload.step ?? "").toLowerCase();
+
+  const renderList = (value: unknown, max = 8): string => {
+    if (!Array.isArray(value)) return "";
+    const items = value.filter((v): v is string => typeof v === "string" && v.trim().length > 0);
+    if (items.length === 0) return "";
+    const preview = items.slice(0, max).join(", ");
+    return items.length > max ? `${preview}, ...` : preview;
+  };
+
   switch (name as KnownEventName) {
     case "cycle_started":
       return "Scan cycle started";
     case "recon_step_started":
-      return `Recon step started: ${String(payload.step ?? "unknown")}`;
-    case "recon_complete":
-      return `Reconnaissance complete (${String(payload.asset_count ?? 0)} assets)`;
+      if (reconStep === "nmap") {
+        const targets = Array.isArray(payload.targets)
+          ? payload.targets.filter((v): v is string => typeof v === "string")
+          : [];
+        const ports = typeof payload.ports === "string" ? payload.ports : "";
+        if (targets.length > 0) {
+          const preview = targets.slice(0, 8).join(", ");
+          const suffix = targets.length > 8 ? ", ..." : "";
+          return ports
+            ? `Starting Nmap on ${targets.length} target(s): ${preview}${suffix} (ports ${ports})`
+            : `Starting Nmap on ${targets.length} target(s): ${preview}${suffix}`;
+        }
+        return "Starting network port scan (Nmap)";
+      }
+      if (reconStep === "subdomain_enum") {
+        const domains = renderList(payload.domains);
+        return domains
+          ? `Starting subdomain enumeration for ${domains}`
+          : "Starting subdomain enumeration";
+      }
+      if (reconStep === "endpoint_crawl") {
+        const urlCount = payload.url_count;
+        return typeof urlCount === "number"
+          ? `Starting endpoint crawl across ${urlCount} URL(s)`
+          : "Starting endpoint crawl";
+      }
+      if (reconStep === "exposed_files") return "Checking for exposed sensitive files";
+      if (reconStep === "censys_lookup") return "Running Censys enrichment";
+      if (reconStep === "tech_fingerprint") return "Fingerprinting technologies";
+      if (reconStep === "github_secrets") return "Scanning GitHub for leaked secrets";
+      if (reconStep === "cloud_probe") return "Probing cloud resources";
+      if (reconStep === "gemini_scoring") {
+        const assetCount = payload.asset_count;
+        return typeof assetCount === "number"
+          ? `Scoring ${assetCount} recon asset(s)`
+          : "Scoring recon assets";
+      }
+      return "Reconnaissance step started";
     case "exploit_target_scan_started":
       return `Exploit scan started: ${String(payload.target ?? "unknown target")}`;
-    case "exploit_target_scan_complete":
-      return `Exploit scan complete: ${String(payload.target ?? "unknown target")} (${String(payload.raw_finding_count ?? 0)} findings)`;
     case "exploit_finding_classified":
       return `Finding ${String(payload.decision ?? "classified")}: ${String(payload.title ?? "unknown finding")}`;
-    case "exploit_complete":
-      return `Exploitation complete (${String(payload.finding_count ?? 0)} findings)`;
+    case "exploit_borderline_filter_started":
+      return `Starting Gemini false-positive review (${String(payload.count ?? 0)} finding(s))`;
     case "demo_seeded":
       return "Demo finding injected";
     case "lateral_round_started":
       return `Lateral movement round ${String(payload.round ?? "?")} started`;
     case "lateral_tool_call_started":
       return `Lateral tool call: ${String(payload.tool ?? "unknown tool")} (start)`;
-    case "lateral_tool_call_complete":
-      return `Lateral tool call: ${String(payload.tool ?? "unknown tool")} (complete)`;
+    case "lateral_finding_started":
+      return `Analyzing finding: ${String(payload.vulnerability_class ?? "unknown")} (${String(payload.severity ?? "unknown")})`;
+    case "lateral_agent_started":
+      return `Starting lateral movement analysis (${String(payload.finding_count ?? 0)} finding(s))`;
     case "lateral_chain_built":
       return `Lateral chain built for finding ${String(payload.finding_id ?? "unknown")}`;
-    case "lateral_complete":
-      return `Lateral movement complete (${String(payload.chain_count ?? 0)} chains)`;
     case "github_issues_created": {
       const urls = payload.issue_urls;
       const count = Array.isArray(urls) ? urls.length : 0;
       return `GitHub issues created: ${count}`;
     }
-    case "cycle_complete": {
-      if (typeof payload.skipped === "string")
-        return `Cycle complete (skipped ${payload.skipped})`;
-      return "Cycle complete";
-    }
+    case "recon_tool_result":
+    case "recon_step_complete":
+    case "recon_complete":
+    case "exploit_target_scan_complete":
+    case "exploit_complete":
+    case "lateral_tool_call_complete":
+    case "lateral_complete":
+      return "";
     default:
       return "";
   }

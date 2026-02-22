@@ -146,6 +146,7 @@ class ReconAgent:
                 "engagement_id": scope.engagement_id,
                 "step": "nmap",
                 "targets": nmap_targets,
+                "ports": nmap_ports,
             }
         )
         for target in nmap_targets:
