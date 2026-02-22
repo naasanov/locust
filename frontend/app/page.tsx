@@ -11,6 +11,7 @@ import {
   Bug,
   ChevronRight,
   Cloud,
+  GitBranch,
   Globe,
   Plus,
   Search,
@@ -414,6 +415,7 @@ export default function Home() {
   const [domains, setDomains] = useState<string[]>([]);
   const [ipRanges, setIpRanges] = useState<string[]>([]);
   const [cloudAccounts, setCloudAccounts] = useState<string[]>([]);
+  const [githubRepoUrl, setGithubRepoUrl] = useState("");
   const [forbiddenHosts, setForbiddenHosts] = useState<string[]>([]);
   const [forbiddenActions, setForbiddenActions] = useState<string[]>([]);
   const [loadingPhase, setLoadingPhase] = useState(0);
@@ -534,7 +536,7 @@ export default function Home() {
         expires_at: new Date(Date.now() + 86400000).toISOString(),
         monthly_fee_usdc: 0.0,
       },
-      github_repo_url: null,
+      github_repo_url: githubRepoUrl.trim() || null,
     };
 
     setShowSwarm(true);
@@ -603,6 +605,7 @@ export default function Home() {
     setDomains([]);
     setIpRanges([]);
     setCloudAccounts([]);
+    setGithubRepoUrl("");
     setForbiddenHosts([]);
     setForbiddenActions([]);
     setVulnerabilities([]);
@@ -760,6 +763,17 @@ export default function Home() {
                   }
                   placeholder="e.g. aws:123456789 or gcp:my-project"
                 />
+                <div className="space-y-2">
+                  <label className="text-xs font-mono uppercase tracking-wider text-muted-foreground flex items-center gap-2">
+                    <GitBranch className="w-3.5 h-3.5" /> GitHub Repository URL
+                  </label>
+                  <Input
+                    value={githubRepoUrl}
+                    onChange={(e) => setGithubRepoUrl(e.target.value)}
+                    placeholder="e.g. https://github.com/org/repo or org/repo"
+                    className="bg-background border-border text-foreground placeholder:text-muted-foreground font-mono text-sm"
+                  />
+                </div>
 
                 <div className="border-t border-border pt-8 space-y-8">
                   <h2 className="font-display font-medium text-xs uppercase tracking-[0.2em] text-destructive/80">
