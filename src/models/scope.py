@@ -46,3 +46,4 @@ class ScopeDocument(BaseModel):
     targets: Targets
     forbidden_spec: ForbiddenSpec
     constraints: EngagementConstraints
+    github_repo_url: str | None = None  # optional: e.g. "https://github.com/org/repo"
