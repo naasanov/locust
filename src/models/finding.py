@@ -1,12 +1,11 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Literal
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
-if TYPE_CHECKING:
-    from src.models.asset import AssetDocument
+from src.models.asset import AssetDocument
 
 Severity = Literal["critical", "high", "medium", "low", "info"]
 BlastRadius = Literal["single_asset", "multi_asset"]
