@@ -19,7 +19,7 @@ class GeminiScorer:
     Called once at the end after all deterministic tools have run.
     """
 
-    MODEL_NAME = "gemini-2.0-flash"
+    MODEL_NAME = "gemini-2.5-flash"
 
     SCORING_PROMPT = """You are a security analyst scoring attack surface risk.
 
