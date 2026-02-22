@@ -4,7 +4,9 @@ from collections.abc import Awaitable, Callable
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from src.agents.protocols import ExploitProtocol, LateralProtocol, ReconProtocol
+from src.config import get_settings
 from src.db import mongo
+from src.integrations.github_issues import create_issues_for_chains
 from src.models.finding import LateralAgentInput
 from src.models.scope import ScopeDocument
 
@@ -98,4 +100,24 @@ class Orchestrator:
             "engagement_id": scope.engagement_id,
             "chain_count": len(chains),
         })
+
+        # --- GitHub Issues (optional — only when a repo URL is provided) ---
+        if scope.github_repo_url:
+            token = get_settings().GITHUB_TOKEN
+            if token:
+                issue_urls = await create_issues_for_chains(
+                    chains=chains,
+                    repo_url=scope.github_repo_url,
+                    github_token=token,
+                )
+                await self._emit({
+                    "event": "github_issues_created",
+                    "engagement_id": scope.engagement_id,
+                    "issue_urls": issue_urls,
+                })
+            else:
+                logger.warning(
+                    "github_repo_url is set but GITHUB_TOKEN is empty; skipping issue creation."
+                )
+
         await self._emit({"event": "cycle_complete", "engagement_id": scope.engagement_id})
