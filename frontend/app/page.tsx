@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Search, Plus, X, Shield, Loader2, AlertTriangle, Bug, Server, Globe, Cloud } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -10,6 +10,9 @@ import { Finding } from '@/types';
 import Image from 'next/image';
 
 type Stage = 'search' | 'form' | 'loading' | 'results';
+
+const API_BASE = process.env.NEXT_PUBLIC_API || 'http://localhost:8000';
+const WS_BASE = process.env.NEXT_PUBLIC_WS || API_BASE.replace(/^http/, 'ws');
 
 const LOCUST_COUNT = 22;
 const SWARM = Array.from({ length: LOCUST_COUNT }, (_, i) => ({
@@ -44,278 +47,46 @@ const LOADING_PHASES = [
   { label: 'Compiling vulnerability report...', icon: AlertTriangle },
 ];
 
-const MOCK_FINDINGS: Finding[] = [
-  {
-    finding_id: '1',
-    engagement_id: 'demo',
-    asset_id: 'asset-1',
-    vulnerability_class: 'SQL Injection',
-    title: 'Remote Code Execution via deserialization',
-    severity: 'critical',
-    exploitable: true,
-    affected_url: 'https://api.target.com/import',
-    evidence: {
-      request: 'POST /api/import',
-      response_snippet: 'Unsafe deserialization allows arbitrary code execution',
-      status_code: 500,
-    },
-    credentials_found: [],
-    gemini_reasoning: 'Unsafe deserialization in /api/import endpoint allows arbitrary code execution.',
-    blast_radius: 'multi_asset',
-    on_chain_tx: null,
-    remediation: 'Validate and sanitize all deserialized data',
-    mitre_technique: 'T1210',
-    discovered_at: new Date().toISOString(),
-  },
-  {
-    finding_id: '2',
-    engagement_id: 'demo',
-    asset_id: 'asset-2',
-    vulnerability_class: 'Authentication',
-    title: 'Exposed admin panel with default credentials',
-    severity: 'high',
-    exploitable: true,
-    affected_url: 'https://admin.target.com:8080',
-    evidence: {
-      request: 'GET /admin',
-      response_snippet: 'Admin panel accessible with admin:admin credentials',
-      status_code: 200,
-    },
-    credentials_found: [],
-    gemini_reasoning: null,
-    blast_radius: 'single_asset',
-    on_chain_tx: null,
-    remediation: 'Change default credentials and implement strong authentication',
-    mitre_technique: 'T1078',
-    discovered_at: new Date().toISOString(),
-  },
-  {
-    finding_id: '3',
-    engagement_id: 'demo',
-    asset_id: 'asset-1',
-    vulnerability_class: 'XSS',
-    title: 'Cross-Site Scripting (Stored)',
-    severity: 'medium',
-    exploitable: true,
-    affected_url: 'https://app.target.com/profile',
-    evidence: {
-      request: 'POST /profile/bio',
-      response_snippet: 'Stored XSS in user profile bio field',
-      status_code: 200,
-    },
-    credentials_found: [],
-    gemini_reasoning: 'Stored XSS can lead to session hijacking and data theft',
-    blast_radius: 'single_asset',
-    on_chain_tx: null,
-    remediation: 'Implement output encoding and Content Security Policy',
-    mitre_technique: 'T1059',
-    discovered_at: new Date().toISOString(),
-  },
-  {
-    finding_id: '4',
-    engagement_id: 'demo',
-    asset_id: 'asset-3',
-    vulnerability_class: 'SSRF',
-    title: 'Server-Side Request Forgery',
-    severity: 'high',
-    exploitable: true,
-    affected_url: 'https://api.target.com/fetch',
-    evidence: {
-      request: 'GET /api/fetch?url=http://169.254.169.254/latest/meta-data/',
-      response_snippet: 'SSRF allows internal network scanning',
-      status_code: 200,
-    },
-    credentials_found: [],
-    gemini_reasoning: 'SSRF vulnerability allows access to internal AWS metadata service',
-    blast_radius: 'multi_asset',
-    on_chain_tx: null,
-    remediation: 'Validate and whitelist allowed URLs',
-    mitre_technique: 'T1090',
-    discovered_at: new Date().toISOString(),
-  },
-  {
-    finding_id: '5',
-    engagement_id: 'demo',
-    asset_id: 'asset-2',
-    vulnerability_class: 'Broken Authentication',
-    title: 'Missing rate limiting on login endpoint',
-    severity: 'medium',
-    exploitable: true,
-    affected_url: 'https://auth.target.com/login',
-    evidence: {
-      request: 'POST /login',
-      response_snippet: 'No rate limiting detected after 1000 attempts',
-      status_code: 401,
-    },
-    credentials_found: [],
-    gemini_reasoning: 'Lack of rate limiting enables brute force attacks',
-    blast_radius: 'single_asset',
-    on_chain_tx: null,
-    remediation: 'Implement rate limiting and account lockout',
-    mitre_technique: 'T1110',
-    discovered_at: new Date().toISOString(),
-  },
-  {
-    finding_id: '6',
-    engagement_id: 'demo',
-    asset_id: 'asset-4',
-    vulnerability_class: 'Sensitive Data Exposure',
-    title: 'API keys exposed in JavaScript bundle',
-    severity: 'critical',
-    exploitable: true,
-    affected_url: 'https://app.target.com/static/js/main.js',
-    evidence: {
-      request: 'GET /static/js/main.js',
-      response_snippet: 'const API_KEY = "sk-prod-abc123xyz789"',
-      status_code: 200,
-    },
-    credentials_found: [{
-      credential_type: 'api_key',
-      username: null,
-      password: null,
-      token: 'sk-prod-abc123xyz789',
-      description: 'Production API key exposed in frontend bundle',
-    }],
-    gemini_reasoning: 'Hardcoded production API keys in client-side code',
-    blast_radius: 'multi_asset',
-    on_chain_tx: null,
-    remediation: 'Rotate API keys and use environment variables',
-    mitre_technique: 'T1552',
-    discovered_at: new Date().toISOString(),
-  },
-  {
-    finding_id: '7',
-    engagement_id: 'demo',
-    asset_id: 'asset-1',
-    vulnerability_class: 'Information Disclosure',
-    title: 'Verbose error messages in production',
-    severity: 'low',
-    exploitable: false,
-    affected_url: 'https://api.target.com/users/123',
-    evidence: {
-      request: 'GET /users/abc',
-      response_snippet: 'Stack trace revealing internal paths',
-      status_code: 500,
-    },
-    credentials_found: [],
-    gemini_reasoning: null,
-    blast_radius: 'single_asset',
-    on_chain_tx: null,
-    remediation: 'Implement generic error messages for production',
-    mitre_technique: 'T1190',
-    discovered_at: new Date().toISOString(),
-  },
-  {
-    finding_id: '8',
-    engagement_id: 'demo',
-    asset_id: 'asset-5',
-    vulnerability_class: 'IDOR',
-    title: 'Insecure Direct Object Reference in user profiles',
-    severity: 'high',
-    exploitable: true,
-    affected_url: 'https://app.target.com/api/user/profile',
-    evidence: {
-      request: 'GET /api/user/profile?id=1001',
-      response_snippet: 'Access to other users data without authorization',
-      status_code: 200,
-    },
-    credentials_found: [],
-    gemini_reasoning: 'Sequential IDs allow enumeration of all user profiles',
-    blast_radius: 'single_asset',
-    on_chain_tx: null,
-    remediation: 'Implement proper authorization checks',
-    mitre_technique: 'T1078',
-    discovered_at: new Date().toISOString(),
-  },
-  {
-    finding_id: '9',
-    engagement_id: 'demo',
-    asset_id: 'asset-3',
-    vulnerability_class: 'Security Misconfiguration',
-    title: 'CORS misconfiguration allows any origin',
-    severity: 'medium',
-    exploitable: true,
-    affected_url: 'https://api.target.com/*',
-    evidence: {
-      request: 'OPTIONS /api/data',
-      response_snippet: 'Access-Control-Allow-Origin: *',
-      status_code: 200,
-    },
-    credentials_found: [],
-    gemini_reasoning: 'Overly permissive CORS policy enables CSRF attacks',
-    blast_radius: 'multi_asset',
-    on_chain_tx: null,
-    remediation: 'Configure CORS to allow only trusted domains',
-    mitre_technique: 'T1190',
-    discovered_at: new Date().toISOString(),
-  },
-  {
-    finding_id: '10',
-    engagement_id: 'demo',
-    asset_id: 'asset-6',
-    vulnerability_class: 'Command Injection',
-    title: 'OS command injection in file upload',
-    severity: 'critical',
-    exploitable: true,
-    affected_url: 'https://app.target.com/upload',
-    evidence: {
-      request: 'POST /upload filename="test.jpg; whoami"',
-      response_snippet: 'Command executed: www-data',
-      status_code: 200,
-    },
-    credentials_found: [],
-    gemini_reasoning: 'Unsanitized filename parameter allows arbitrary command execution',
-    blast_radius: 'multi_asset',
-    on_chain_tx: null,
-    remediation: 'Sanitize all user inputs and use safe file handling',
-    mitre_technique: 'T1059',
-    discovered_at: new Date().toISOString(),
-  },
-  {
-    finding_id: '11',
-    engagement_id: 'demo',
-    asset_id: 'asset-4',
-    vulnerability_class: 'Cryptographic Failure',
-    title: 'Weak password hashing algorithm',
-    severity: 'high',
-    exploitable: false,
-    affected_url: 'https://auth.target.com',
-    evidence: {
-      request: 'Database analysis',
-      response_snippet: 'Passwords stored with MD5 hashing',
-      status_code: 0,
-    },
-    credentials_found: [],
-    gemini_reasoning: 'MD5 is cryptographically broken and vulnerable to rainbow table attacks',
-    blast_radius: 'multi_asset',
-    on_chain_tx: null,
-    remediation: 'Migrate to bcrypt, scrypt, or Argon2',
-    mitre_technique: 'T1110',
-    discovered_at: new Date().toISOString(),
-  },
-  {
-    finding_id: '12',
-    engagement_id: 'demo',
-    asset_id: 'asset-2',
-    vulnerability_class: 'Business Logic',
-    title: 'Price manipulation in checkout process',
-    severity: 'high',
-    exploitable: true,
-    affected_url: 'https://shop.target.com/checkout',
-    evidence: {
-      request: 'POST /checkout {"price": 0.01}',
-      response_snippet: 'Order accepted with manipulated price',
-      status_code: 200,
-    },
-    credentials_found: [],
-    gemini_reasoning: 'Client-side price validation allows arbitrary price modification',
-    blast_radius: 'single_asset',
-    on_chain_tx: null,
-    remediation: 'Implement server-side price validation',
-    mitre_technique: 'T1190',
-    discovered_at: new Date().toISOString(),
-  },
-];
+// Map backend WebSocket events to loading phase indices
+const EVENT_PHASE_MAP: Record<string, number> = {
+  cycle_started: 1,
+  recon_complete: 2,
+  exploit_complete: 3,
+  lateral_complete: 4,
+  cycle_complete: 4,
+};
+
+function formatLogEntry(msg: Record<string, unknown>): string | null {
+  switch (msg.event) {
+    case 'cycle_started':
+      return `SWARM DEPLOYED ── engagement ${String(msg.engagement_id).slice(0, 8)}...`;
+    case 'recon_complete':
+      return `RECON COMPLETE ── ${msg.asset_count} target surfaces mapped`;
+    case 'exploit_complete':
+      return `EXPLOIT SCAN COMPLETE ── ${msg.finding_count} vulnerabilities confirmed`;
+    case 'lateral_complete':
+      return `LATERAL MOVEMENT COMPLETE ── ${msg.chain_count} attack chains forged`;
+    case 'demo_seeded':
+      return `SEED FINDING PLANTED ── ${msg.affected_url}`;
+    case 'github_issues_created':
+      return `GITHUB ISSUES FILED ── ${Array.isArray(msg.issue_urls) ? msg.issue_urls.length : 0} reports`;
+    case 'cycle_complete':
+      return `CYCLE COMPLETE ── retrieving intelligence...`;
+    default:
+      return null;
+  }
+}
+
+function parseCloudAccount(str: string): { provider: 'aws' | 'gcp' | 'azure'; account_id?: string; project_id?: string } | null {
+  const colonIdx = str.indexOf(':');
+  if (colonIdx === -1) return null;
+  const providerRaw = str.slice(0, colonIdx).toLowerCase().trim();
+  const id = str.slice(colonIdx + 1).trim();
+  if (!['aws', 'gcp', 'azure'].includes(providerRaw)) return null;
+  const provider = providerRaw as 'aws' | 'gcp' | 'azure';
+  if (provider === 'gcp') return { provider, project_id: id };
+  return { provider, account_id: id };
+}
 
 const severityColor: Record<string, { badge: string; row: string }> = {
   critical: { badge: 'bg-red-500/20 text-red-400 border-red-500/30', row: 'bg-red-500/[0.06]' },
@@ -404,6 +175,12 @@ export default function Home() {
   const [loadingPhase, setLoadingPhase] = useState(0);
   const [vulnerabilities, setVulnerabilities] = useState<Finding[]>([]);
   const [showSwarm, setShowSwarm] = useState(false);
+  const [logEntries, setLogEntries] = useState<string[]>([]);
+  const [scanError, setScanError] = useState<string | null>(null);
+
+  const wsRef = useRef<WebSocket | null>(null);
+  const hasTransitioned = useRef(false);
+  const logEndRef = useRef<HTMLDivElement | null>(null);
 
   const [twText, setTwText] = useState('');
   const [twPhrase, setTwPhrase] = useState(0);
@@ -430,32 +207,142 @@ export default function Home() {
     }
   }, [twText, twPhrase, twPhase]);
 
+  useEffect(() => {
+    logEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [logEntries]);
+
+  const fetchResults = useCallback(async (eid: string) => {
+    if (hasTransitioned.current) return;
+    hasTransitioned.current = true;
+
+    wsRef.current?.close();
+    wsRef.current = null;
+
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 600));
+      const res = await fetch(`${API_BASE}/api/findings/${eid}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      setVulnerabilities(data.findings ?? []);
+      setStage('results');
+    } catch (err) {
+      setScanError(`Failed to retrieve results: ${err}`);
+      setStage('form');
+    }
+  }, []);
+
   const handleUrlSubmit = () => {
     if (!url.trim()) return;
     setStage('form');
   };
 
-  const handleRun = () => {
+  const handleRun = async () => {
+    if (!url.trim()) return;
+    setScanError(null);
+    hasTransitioned.current = false;
+
+    const eid = crypto.randomUUID();
+
+    // Extract hostname from URL for use as customer/domain
+    let hostname = url;
+    try {
+      hostname = new URL(url.startsWith('http') ? url : `https://${url}`).hostname;
+    } catch {
+      hostname = url;
+    }
+
+    const scope = {
+      engagement_id: eid,
+      customer: hostname,
+      targets: {
+        domains: Array.from(new Set([hostname, ...domains])),
+        ip_ranges: ipRanges,
+        cloud_accounts: cloudAccounts.map(parseCloudAccount).filter(Boolean),
+      },
+      forbidden_spec: {
+        forbidden_hosts: forbiddenHosts,
+        forbidden_actions: forbiddenActions,
+        tier_limit: 2,
+      },
+      constraints: {
+        active_hours: {
+          timezone: 'UTC',
+          windows: [
+            { days: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'], start: '00:00', end: '23:59' },
+          ],
+        },
+        cycle_interval_hours: 24,
+        expires_at: new Date(Date.now() + 86400000).toISOString(),
+        monthly_fee_usdc: 0.0,
+      },
+      github_repo_url: null,
+    };
+
     setShowSwarm(true);
     setTimeout(() => setShowSwarm(false), 8000);
     setStage('loading');
     setLoadingPhase(0);
-    let phase = 0;
-    const interval = setInterval(() => {
-      phase++;
-      if (phase >= LOADING_PHASES.length) {
-        clearInterval(interval);
-        setTimeout(() => {
-          setVulnerabilities(MOCK_FINDINGS);
-          setStage('results');
-        }, 1200);
-      } else {
-        setLoadingPhase(phase);
+    setLogEntries([]);
+
+    // Open WebSocket for real-time progress events
+    const ws = new WebSocket(`${WS_BASE}/ws/live`);
+    wsRef.current = ws;
+
+    ws.onmessage = (event) => {
+      let msg: Record<string, unknown>;
+      try {
+        msg = JSON.parse(event.data);
+      } catch {
+        return;
       }
-    }, 1800);
+      if ('ping' in msg) return;
+
+      const phase = EVENT_PHASE_MAP[msg.event as string];
+      if (phase !== undefined) {
+        setLoadingPhase((prev) => Math.max(prev, phase));
+      }
+
+      const entry = formatLogEntry(msg);
+      if (entry) setLogEntries((prev) => [...prev, entry]);
+
+      if (msg.event === 'cycle_complete') {
+        fetchResults(eid);
+      }
+    };
+
+    ws.onerror = () => {
+      // Non-fatal — POST response will trigger fetchResults as fallback
+    };
+
+    try {
+      const res = await fetch(`${API_BASE}/api/orchestrator/run-once`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(scope),
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({})) as Record<string, string>;
+        throw new Error(err.detail || `Server error ${res.status}`);
+      }
+
+      const data = await res.json() as { engagement_id: string };
+      // Fallback: WS cycle_complete may have already triggered this
+      fetchResults(data.engagement_id);
+    } catch (err) {
+      if (!hasTransitioned.current) {
+        setScanError(String(err));
+        setStage('form');
+      }
+      wsRef.current?.close();
+      wsRef.current = null;
+    }
   };
 
   const handleReset = () => {
+    wsRef.current?.close();
+    wsRef.current = null;
+    hasTransitioned.current = false;
     setStage('search');
     setUrl('');
     setDomains([]);
@@ -464,6 +351,8 @@ export default function Home() {
     setForbiddenHosts([]);
     setForbiddenActions([]);
     setVulnerabilities([]);
+    setLogEntries([]);
+    setScanError(null);
   };
 
   const toggleForbiddenAction = (action: string) => {
@@ -478,7 +367,7 @@ export default function Home() {
       <header className="p-6 flex items-center justify-between">
         <div className="flex items-center gap-4">
           <Image
-            src="/locust_right.png"
+            src="/locust.png"
             alt="Locust"
             width={48}
             height={48}
@@ -519,7 +408,6 @@ export default function Home() {
                     <span className="cursor-blink text-primary ml-0.5">|</span>
                   </h1>
                   <div className='w-64' />
-
                 </div>
               </motion.div>
               <p className="font-sans text-muted-foreground text-base font-normal mb-12">Enter the primary target URL to begin</p>
@@ -560,6 +448,17 @@ export default function Home() {
                 />
               </motion.div>
 
+              {/* Error banner */}
+              {scanError && (
+                <motion.div
+                  initial={{ opacity: 0, y: -8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="mb-4 px-4 py-3 rounded-lg bg-destructive/10 border border-destructive/30 font-mono text-xs text-destructive"
+                >
+                  <span className="opacity-60">ERROR ── </span>{scanError}
+                </motion.div>
+              )}
+
               {/* Form fields */}
               <motion.div
                 className="bg-card/50 border border-border rounded-xl p-8 space-y-8"
@@ -595,7 +494,7 @@ export default function Home() {
                   items={cloudAccounts}
                   onAdd={(v) => setCloudAccounts((p) => [...p, v])}
                   onRemove={(v) => setCloudAccounts((p) => p.filter((x) => x !== v))}
-                  placeholder="e.g. AWS:123456789"
+                  placeholder="e.g. aws:123456789 or gcp:my-project"
                 />
 
                 <div className="border-t border-border pt-8 space-y-8">
@@ -663,7 +562,7 @@ export default function Home() {
                 </div>
               </div>
 
-              <div className="text-center space-y-8">
+              <div className="text-center space-y-8 w-full">
                 <motion.div
                   animate={{ rotate: 360 }}
                   transition={{ duration: 2, repeat: Infinity, ease: 'linear' }}
@@ -703,6 +602,35 @@ export default function Home() {
                     );
                   })}
                 </div>
+
+                {/* Live activity log */}
+                <AnimatePresence>
+                  {logEntries.length > 0 && (
+                    <motion.div
+                      initial={{ opacity: 0, y: 10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      className="w-full bg-black/40 border border-primary/20 rounded-lg p-4 text-left"
+                    >
+                      <div className="font-mono text-xs text-primary/50 mb-2 uppercase tracking-widest">
+                        ── activity log ──
+                      </div>
+                      <div className="space-y-1.5 max-h-36 overflow-y-auto">
+                        {logEntries.map((entry, i) => (
+                          <motion.div
+                            key={i}
+                            initial={{ opacity: 0, x: -6 }}
+                            animate={{ opacity: 1, x: 0 }}
+                            className="font-mono text-xs text-foreground/60 flex gap-2"
+                          >
+                            <span className="text-primary/40 shrink-0">→</span>
+                            <span>{entry}</span>
+                          </motion.div>
+                        ))}
+                        <div ref={logEndRef} />
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
               </div>
             </motion.div>
           )}
@@ -745,73 +673,79 @@ export default function Home() {
                   </p>
                 </div>
 
-                <div className="overflow-auto max-h-150">
-                  <table className="w-full">
-                    <thead className="bg-muted sticky top-0">
-                      <tr>
-                        <th className="px-4 py-3 text-left text-xs font-mono uppercase tracking-wider text-muted-foreground font-semibold">
-                          Severity
-                        </th>
-                        <th className="px-4 py-3 text-left text-xs font-mono uppercase tracking-wider text-muted-foreground font-semibold">
-                          Title
-                        </th>
-                        <th className="px-4 py-3 text-left text-xs font-mono uppercase tracking-wider text-muted-foreground font-semibold">
-                          Class
-                        </th>
-                        <th className="px-4 py-3 text-left text-xs font-mono uppercase tracking-wider text-muted-foreground font-semibold">
-                          Host
-                        </th>
-                        <th className="px-4 py-3 text-left text-xs font-mono uppercase tracking-wider text-muted-foreground font-semibold">
-                          Exploitable
-                        </th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {vulnerabilities.map((vuln) => (
-                        <tr
-                          key={vuln.finding_id}
-                          className={`border-t border-border transition-all ${severityColor[vuln.severity].row}`}
-                        >
-                          <td className="px-4 py-3">
-                            <Badge
-                              variant="outline"
-                              className={`font-mono text-xs uppercase ${severityColor[vuln.severity].badge}`}
-                            >
-                              {vuln.severity}
-                            </Badge>
-                          </td>
-                          <td className="px-4 py-3">
-                            <div className="font-mono text-sm text-foreground font-medium">
-                              {vuln.title}
-                            </div>
-                            {vuln.gemini_reasoning && (
-                              <div className="text-xs text-muted-foreground mt-1 font-mono">
-                                {vuln.gemini_reasoning}
-                              </div>
-                            )}
-                          </td>
-                          <td className="px-4 py-3 font-mono text-sm text-foreground">
-                            {vuln.vulnerability_class}
-                          </td>
-                          <td className="px-4 py-3 font-mono text-xs text-primary">
-                            {vuln.affected_url}
-                          </td>
-                          <td className="px-4 py-3">
-                            {vuln.exploitable ? (
-                              <Badge className="bg-red-500/20 text-red-400 border-red-500/30 font-mono text-xs">
-                                YES
-                              </Badge>
-                            ) : (
-                              <Badge className="bg-green-500/20 text-green-400 border-green-500/30 font-mono text-xs">
-                                NO
-                              </Badge>
-                            )}
-                          </td>
+                {vulnerabilities.length === 0 ? (
+                  <div className="px-6 py-12 text-center font-mono text-sm text-muted-foreground">
+                    No vulnerabilities found.
+                  </div>
+                ) : (
+                  <div className="overflow-auto max-h-150">
+                    <table className="w-full">
+                      <thead className="bg-muted sticky top-0">
+                        <tr>
+                          <th className="px-4 py-3 text-left text-xs font-mono uppercase tracking-wider text-muted-foreground font-semibold">
+                            Severity
+                          </th>
+                          <th className="px-4 py-3 text-left text-xs font-mono uppercase tracking-wider text-muted-foreground font-semibold">
+                            Title
+                          </th>
+                          <th className="px-4 py-3 text-left text-xs font-mono uppercase tracking-wider text-muted-foreground font-semibold">
+                            Class
+                          </th>
+                          <th className="px-4 py-3 text-left text-xs font-mono uppercase tracking-wider text-muted-foreground font-semibold">
+                            Host
+                          </th>
+                          <th className="px-4 py-3 text-left text-xs font-mono uppercase tracking-wider text-muted-foreground font-semibold">
+                            Exploitable
+                          </th>
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                      </thead>
+                      <tbody>
+                        {vulnerabilities.map((vuln) => (
+                          <tr
+                            key={vuln.finding_id}
+                            className={`border-t border-border transition-all ${severityColor[vuln.severity]?.row ?? ''}`}
+                          >
+                            <td className="px-4 py-3">
+                              <Badge
+                                variant="outline"
+                                className={`font-mono text-xs uppercase ${severityColor[vuln.severity]?.badge ?? ''}`}
+                              >
+                                {vuln.severity}
+                              </Badge>
+                            </td>
+                            <td className="px-4 py-3">
+                              <div className="font-mono text-sm text-foreground font-medium">
+                                {vuln.title}
+                              </div>
+                              {vuln.gemini_reasoning && (
+                                <div className="text-xs text-muted-foreground mt-1 font-mono">
+                                  {vuln.gemini_reasoning}
+                                </div>
+                              )}
+                            </td>
+                            <td className="px-4 py-3 font-mono text-sm text-foreground">
+                              {vuln.vulnerability_class}
+                            </td>
+                            <td className="px-4 py-3 font-mono text-xs text-primary">
+                              {vuln.affected_url}
+                            </td>
+                            <td className="px-4 py-3">
+                              {vuln.exploitable ? (
+                                <Badge className="bg-red-500/20 text-red-400 border-red-500/30 font-mono text-xs">
+                                  YES
+                                </Badge>
+                              ) : (
+                                <Badge className="bg-green-500/20 text-green-400 border-green-500/30 font-mono text-xs">
+                                  NO
+                                </Badge>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
               </motion.div>
             </motion.div>
           )}
