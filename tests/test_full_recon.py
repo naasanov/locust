@@ -6,7 +6,7 @@ Tests the complete recon pipeline:
 2. subdomain enumeration
 3. endpoint crawling
 4. exposed files detection
-5. shodan lookup
+5. Censys lookup
 6. gemini scoring
 
 Run with: pytest tests/test_full_recon.py -v -s
@@ -18,6 +18,7 @@ import logging
 import os
 import sys
 from datetime import datetime, timezone
+import pytest
 
 # Configure logging
 logging.basicConfig(
@@ -33,7 +34,7 @@ async def run_full_recon_test(target_domain: str = "example.com", target_ip: str
 
     Args:
         target_domain: Domain to scan (default: example.com for safe testing)
-        target_ip: Optional IP to scan with nmap/shodan
+        target_ip: Optional IP to scan with nmap/Censys
     """
     from src.config import get_settings
     from src.agents.recon import ReconAgent
@@ -47,18 +48,22 @@ async def run_full_recon_test(target_domain: str = "example.com", target_ip: str
     print("\n" + "=" * 60)
     print("FULL RECON SYSTEM TEST")
     print("=" * 60)
-    print(f"Target Domain: {target_domain}")
+    print(f"Target Domain: {target_domain if target_domain != 'none' else 'None'}")
     print(f"Target IP: {target_ip or 'None (will use domain resolution)'}")
     print(f"Gemini API Key: {'Set' if settings.GEMINI_API_KEY else 'NOT SET'}")
-    print(f"Shodan API Key: {'Set' if settings.SHODAN_API_KEY else 'NOT SET'}")
+    print(f"Censys API Key: {'Set' if settings.CENSYS_API_KEY else 'NOT SET'}")
+    print(f"GitHub Token: {'Set' if getattr(settings, 'GITHUB_TOKEN', None) else 'NOT SET'}")
     print("=" * 60 + "\n")
 
     # Create test scope document
+    # If IP is provided without domain, don't include a domain
+    domains = [target_domain] if target_domain and target_domain != "none" else []
+
     scope = ScopeDocument(
         engagement_id="test-full-recon-001",
         customer="Test Customer",
         targets=Targets(
-            domains=[target_domain],
+            domains=domains,
             ip_ranges=[target_ip] if target_ip else [],
         ),
         forbidden_spec=ForbiddenSpec(
@@ -77,7 +82,8 @@ async def run_full_recon_test(target_domain: str = "example.com", target_ip: str
     # Initialize ReconAgent (without DB persistence for testing)
     agent = ReconAgent(
         gemini_api_key=settings.GEMINI_API_KEY,
-        shodan_api_key=settings.SHODAN_API_KEY,
+        censys_api_key=settings.CENSYS_API_KEY,
+        github_token=getattr(settings, 'GITHUB_TOKEN', None),
         persist_assets=False,  # Don't write to DB for testing
     )
 
@@ -98,11 +104,24 @@ async def run_full_recon_test(target_domain: str = "example.com", target_ip: str
             print(f"  URL: {asset.url}")
             print(f"  Open Ports: {asset.open_ports}")
             print(f"  Services: {[f'{s.service}:{s.port}' for s in asset.services]}")
+            print(f"  Tech Stack: {asset.tech_stack}")
             print(f"  Endpoints: {asset.endpoints[:5]}{'...' if len(asset.endpoints) > 5 else ''}")
             print(f"  Exposed Files: {[f.path for f in asset.exposed_files]}")
-            print(f"  Shodan Vulns: {asset.shodan_vulns}")
+            print(f"  Censys Vulns: {asset.shodan_vulns}")
+            print(f"  Secrets Found: {[f'{s.type} ({s.source})' for s in asset.secrets_found]}")
+            print(f"  Cloud Issues: {[f'{c.type}: {c.resource}' for c in asset.cloud_issues]}")
             print(f"  Attack Surface Score: {asset.attack_surface_score:.2f}")
             print(f"  Score Reasoning: {asset.score_reasoning}")
+
+        # Print highest scoring asset as JSON in canonical AssetDocument schema format
+        if assets:
+            import json
+            print("\n" + "=" * 60)
+            print("ASSETDOCUMENT OUTPUT FORMAT (highest-score asset)")
+            print("=" * 60)
+            best_asset = max(assets, key=lambda a: a.attack_surface_score)
+            asset_dict = best_asset.to_recon_output()
+            print(json.dumps(asset_dict, indent=2, default=str))
 
         print("\n" + "=" * 60)
         print("TEST PASSED")
@@ -117,6 +136,7 @@ async def run_full_recon_test(target_domain: str = "example.com", target_ip: str
         raise
 
 
+@pytest.mark.asyncio
 async def test_individual_tools():
     """Test each tool individually."""
     from src.config import get_settings
@@ -125,7 +145,7 @@ async def test_individual_tools():
         enumerate_subdomains,
         crawl_endpoints,
         check_exposed_files,
-        shodan_lookup,
+        censys_lookup,
     )
 
     settings = get_settings()
@@ -165,20 +185,20 @@ async def test_individual_tools():
     except Exception as e:
         print(f"  ✗ Error: {e}")
 
-    # Test 4: Shodan Lookup
-    print("\n[4/5] Testing Shodan lookup...")
-    if settings.SHODAN_API_KEY:
+    # Test 4: Censys Lookup
+    print("\n[4/5] Testing Censys lookup...")
+    if settings.CENSYS_API_KEY:
         try:
             # Use Google DNS as safe test target
-            result = await shodan_lookup(ip="8.8.8.8", api_key=settings.SHODAN_API_KEY)
+            result = await censys_lookup(ip="8.8.8.8", api_key=settings.CENSYS_API_KEY)
             print(f"  Ports: {result['ports']}")
             print(f"  Vulns: {result['vulns']}")
             print(f"  Org: {result['org']}")
-            print("  ✓ Shodan lookup working")
+            print("  ✓ Censys lookup working")
         except Exception as e:
             print(f"  ✗ Error: {e}")
     else:
-        print("  ⚠ Skipped (SHODAN_API_KEY not set)")
+        print("  ⚠ Skipped (CENSYS_API_KEY not set)")
 
     # Test 5: Nmap (localhost only for safety)
     print("\n[5/5] Testing nmap scanner (localhost)...")
@@ -199,6 +219,7 @@ async def test_individual_tools():
     print("=" * 60)
 
 
+@pytest.mark.asyncio
 async def test_gemini_scoring():
     """Test the Gemini scoring component."""
     from src.config import get_settings

@@ -5,7 +5,7 @@ from .tools import (
     enumerate_subdomains,
     crawl_endpoints,
     check_exposed_files,
-    shodan_lookup,
+    censys_lookup,
 )
 from .scoring import GeminiScorer
 
@@ -16,5 +16,5 @@ __all__ = [
     "enumerate_subdomains",
     "crawl_endpoints",
     "check_exposed_files",
-    "shodan_lookup",
+    "censys_lookup",
 ]

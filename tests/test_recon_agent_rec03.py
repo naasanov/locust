@@ -87,8 +87,8 @@ async def test_recon_agent_rec03_pipeline_and_persistence(monkeypatch):
         events.append("exposed")
         return [ExposedFile(path="/.env", size=123)]
 
-    async def fake_shodan_lookup(ip: str, api_key: str | None = None):
-        events.append("shodan")
+    async def fake_censys_lookup(ip: str, api_key: str | None = None):
+        events.append("censys")
         return {
             "vulns": ["CVE-2024-0001"],
             "services": [ServiceInfo(port=443, service="nginx", version="1.24")],
@@ -111,7 +111,7 @@ async def test_recon_agent_rec03_pipeline_and_persistence(monkeypatch):
     monkeypatch.setattr(
         recon_agent_module, "check_exposed_files", fake_check_exposed_files
     )
-    monkeypatch.setattr(recon_agent_module, "shodan_lookup", fake_shodan_lookup)
+    monkeypatch.setattr(recon_agent_module, "censys_lookup", fake_censys_lookup)
     monkeypatch.setattr(recon_agent_module.mongo, "save_assets", fake_save_assets)
 
     agent = ReconAgent(
@@ -135,7 +135,7 @@ async def test_recon_agent_rec03_pipeline_and_persistence(monkeypatch):
     assert max(i for i, e in enumerate(events) if e == "subdomain") < first_score_idx
     assert max(i for i, e in enumerate(events) if e == "crawl") < first_score_idx
     assert max(i for i, e in enumerate(events) if e == "exposed") < first_score_idx
-    assert max(i for i, e in enumerate(events) if e == "shodan") < first_score_idx
+    assert max(i for i, e in enumerate(events) if e == "censys") < first_score_idx
 
 
 def test_gemini_scorer_parse_scores_handles_valid_and_invalid_payloads():

@@ -184,20 +184,20 @@ class TestExposedFiles:
         assert isinstance(files, list)
 
 
-class TestShodanLookup:
-    """Test shodan_lookup tool."""
+class TestCensysLookup:
+    """Test censys_lookup tool."""
 
     @pytest.mark.asyncio
-    async def test_shodan_no_api_key(self):
-        """Test Shodan lookup without API key."""
-        from src.agents.recon.tools import shodan_lookup
+    async def test_censys_no_api_key(self):
+        """Test Censys lookup without API key."""
+        from src.agents.recon.tools import censys_lookup
         import os
 
         # Temporarily unset API key
-        original_key = os.environ.pop("SHODAN_API_KEY", None)
+        original_key = os.environ.pop("CENSYS_API_KEY", None)
 
         try:
-            result = await shodan_lookup(
+            result = await censys_lookup(
                 ip="8.8.8.8",
                 api_key=None,
             )
@@ -208,20 +208,20 @@ class TestShodanLookup:
             assert result["ports"] == []
         finally:
             if original_key:
-                os.environ["SHODAN_API_KEY"] = original_key
+                os.environ["CENSYS_API_KEY"] = original_key
 
     @pytest.mark.asyncio
     @pytest.mark.skipif(
-        not pytest.importorskip("os").environ.get("SHODAN_API_KEY"),
-        reason="SHODAN_API_KEY not set"
+        not pytest.importorskip("os").environ.get("CENSYS_API_KEY"),
+        reason="CENSYS_API_KEY not set"
     )
-    async def test_shodan_with_api_key(self):
-        """Test Shodan lookup with API key (requires env var)."""
-        from src.agents.recon.tools import shodan_lookup
+    async def test_censys_with_api_key(self):
+        """Test Censys lookup with API key (requires env var)."""
+        from src.agents.recon.tools import censys_lookup
 
-        result = await shodan_lookup(ip="8.8.8.8")
+        result = await censys_lookup(ip="8.8.8.8")
 
-        # Google DNS should have some info in Shodan
+        # Google DNS should have some enrichment in Censys
         assert isinstance(result["vulns"], list)
         assert isinstance(result["ports"], list)
 
