@@ -22,7 +22,8 @@ class Orchestrator:
     async def run_cycle(self, scope: ScopeDocument) -> None:
         # --- Recon ---
         assets = await self.recon.run(scope)
-        await mongo.save_assets(self.db, assets)
+        if not getattr(self.recon, "persists_assets", False):
+            await mongo.save_assets(self.db, assets)
 
         # --- Exploit (only assets above threshold, highest score first) ---
         eligible = sorted(
