@@ -1,9 +1,11 @@
 import asyncio
+from src.config import get_settings
 from src.container import build_orchestrator
 from src.models.scope import ScopeDocument
 
 async def main():
-    orchestrator = build_orchestrator(broadcast=broadcast)  # pass your ws_manager broadcast fn
+    settings = get_settings()
+    orchestrator = build_orchestrator(broadcast=None)
     scope = ScopeDocument(engagement_id=settings.ENGAGEMENT_ID, target_url=settings.TARGET_URL)
     
     while True:
