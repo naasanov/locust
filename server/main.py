@@ -11,15 +11,15 @@ from pymongo import MongoClient
 from src.config import get_settings
 from src.container import build_orchestrator
 from src.db.mongo import close_db
-from src.models.scope import (
-    ScopeDocument,
-)
+from src.models.scope import ScopeDocument
 from src.services import get_ws_event_service
 
 load_dotenv()
 
 app = FastAPI()
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+app.add_middleware(
+    CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"]
+)
 
 client = MongoClient(os.getenv("MONGODB_URI"))
 db = client[os.getenv("MONGODB_DB", "artaas")]
@@ -39,27 +39,31 @@ def _get_orch_lock() -> asyncio.Lock:
 def health():
     return {"status": "ok"}
 
+
 @app.get("/api/findings/{eid}")
 def get_findings(eid: str):
     findings = list(db.findings.find({"engagement_id": eid}, {"_id": 0}))
     return {"findings": findings}
+
 
 @app.get("/api/assets/{eid}")
 def get_assets(eid: str):
     assets = list(db.assets.find({"engagement_id": eid}, {"_id": 0}))
     return {"assets": assets}
 
+
 @app.get("/api/chains/{eid}")
 def get_chains(eid: str):
     chains = list(db.attack_chains.find({"engagement_id": eid}, {"_id": 0}))
     return {"chains": chains}
+
 
 @app.get("/api/status")
 def get_status():
     return {
         "assets": db.assets.count_documents({}),
         "findings": db.findings.count_documents({}),
-        "chains": db.attack_chains.count_documents({})
+        "chains": db.attack_chains.count_documents({}),
     }
 
 
@@ -92,7 +96,9 @@ async def run_orchestrator_once(scope: ScopeDocument):
             f"engagement_id={scope.engagement_id} timeout_s={timeout_seconds}"
         )
         async with lock:
-            await asyncio.wait_for(orchestrator.run_cycle(scope), timeout=timeout_seconds)
+            await asyncio.wait_for(
+                orchestrator.run_cycle(scope), timeout=timeout_seconds
+            )
         elapsed = asyncio.get_event_loop().time() - start
         print(
             "[server] run-once completed orchestrator cycle: "
@@ -109,9 +115,13 @@ async def run_orchestrator_once(scope: ScopeDocument):
             detail=f"orchestrator run timed out after {timeout_seconds}s",
         ) from exc
     except Exception as exc:
-        print(f"[server] ERROR: manual orchestrator run failed for {scope.engagement_id}")
+        print(
+            f"[server] ERROR: manual orchestrator run failed for {scope.engagement_id}"
+        )
         print(traceback.format_exc())
-        raise HTTPException(status_code=500, detail=f"orchestrator run failed: {exc}") from exc
+        raise HTTPException(
+            status_code=500, detail=f"orchestrator run failed: {exc}"
+        ) from exc
 
     return {"status": "ok", "engagement_id": scope.engagement_id}
 
@@ -132,7 +142,9 @@ async def websocket_endpoint(websocket: WebSocket):
 async def startup() -> None:
     settings = get_settings()
     print(f"[server] startup complete (LOG_LEVEL={settings.LOG_LEVEL.upper()})")
-    print("[server] Orchestrator background loop disabled; use /api/orchestrator/run-once")
+    print(
+        "[server] Orchestrator background loop disabled; use /api/orchestrator/run-once"
+    )
 
 
 @app.on_event("shutdown")
