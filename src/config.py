@@ -19,6 +19,9 @@ class Settings(BaseSettings):
     AGENT_KEYPAIR_PATH: str = ""
     SOLANA_RPC_URL: str = "https://api.devnet.solana.com"
     LOG_LEVEL: str = "INFO"
+    AGENT_RECON_MODE: str = "real"
+    AGENT_EXPLOIT_MODE: str = "real"
+    AGENT_LATERAL_MODE: str = "real"
 
 
 @lru_cache

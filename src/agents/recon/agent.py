@@ -4,6 +4,7 @@ import hashlib
 import json
 import logging
 from urllib.parse import urlparse
+from collections.abc import Awaitable, Callable
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from src.db import mongo
@@ -58,6 +59,7 @@ class ReconAgent:
         db: AsyncIOMotorDatabase | None = None,
         scorer: GeminiScorer | None = None,
         persist_assets: bool = True,
+        event_emitter: Callable[[dict], Awaitable[None]] | None = None,
     ):
         """
         Initialize the Recon Agent.
@@ -74,6 +76,15 @@ class ReconAgent:
         self.github_token = github_token
         self.db = db or get_db()
         self.persists_assets = persist_assets
+        self._event_emitter = event_emitter
+
+    async def _emit(self, message: dict) -> None:
+        if self._event_emitter is None:
+            return
+        try:
+            await self._event_emitter(message)
+        except Exception:
+            logger.debug("Recon event emit failed", exc_info=True)
 
     @property
     def scorer(self) -> GeminiScorer:
@@ -119,6 +130,9 @@ class ReconAgent:
             List of scored AssetDocuments
         """
         logger.info(f"Starting recon cycle for engagement {scope.engagement_id}")
+        await self._emit(
+            {"event": "recon_agent_started", "engagement_id": scope.engagement_id}
+        )
 
         assets_by_key: dict[str, AssetDocument] = {}
         domains = self._normalized_domains(scope)
@@ -126,6 +140,14 @@ class ReconAgent:
 
         # 1) nmap - scan common ports including web ports above 1000
         nmap_ports = "1-1000,3000,3306,5000,5432,8000,8080,8443,27017"
+        await self._emit(
+            {
+                "event": "recon_step_started",
+                "engagement_id": scope.engagement_id,
+                "step": "nmap",
+                "targets": nmap_targets,
+            }
+        )
         for target in nmap_targets:
             if self._is_forbidden_host(scope, target):
                 continue
@@ -136,8 +158,33 @@ class ReconAgent:
             )
             if asset is not None:
                 self._merge_asset(assets_by_key, asset)
+                await self._emit(
+                    {
+                        "event": "recon_tool_result",
+                        "engagement_id": scope.engagement_id,
+                        "tool": "run_nmap",
+                        "target": target,
+                        "asset": asset.model_dump(mode="json"),
+                    }
+                )
+        await self._emit(
+            {
+                "event": "recon_step_complete",
+                "engagement_id": scope.engagement_id,
+                "step": "nmap",
+                "asset_count": len(assets_by_key),
+            }
+        )
 
         # 2) subdomain enumeration
+        await self._emit(
+            {
+                "event": "recon_step_started",
+                "engagement_id": scope.engagement_id,
+                "step": "subdomain_enum",
+                "domains": domains,
+            }
+        )
         for domain in domains:
             if self._is_forbidden_host(scope, domain):
                 continue
@@ -149,9 +196,35 @@ class ReconAgent:
                 if self._is_forbidden_asset(scope, asset):
                     continue
                 self._merge_asset(assets_by_key, asset)
+            await self._emit(
+                {
+                    "event": "recon_tool_result",
+                    "engagement_id": scope.engagement_id,
+                    "tool": "enumerate_subdomains",
+                    "domain": domain,
+                    "discovered_count": len(discovered),
+                }
+            )
+        await self._emit(
+            {
+                "event": "recon_step_complete",
+                "engagement_id": scope.engagement_id,
+                "step": "subdomain_enum",
+                "asset_count": len(assets_by_key),
+            }
+        )
 
         # 3) endpoint crawl
-        for url in self._crawl_urls(domains, assets_by_key):
+        crawl_urls = self._crawl_urls(domains, assets_by_key)
+        await self._emit(
+            {
+                "event": "recon_step_started",
+                "engagement_id": scope.engagement_id,
+                "step": "endpoint_crawl",
+                "url_count": len(crawl_urls),
+            }
+        )
+        for url in crawl_urls:
             if self._is_forbidden_url(scope, url):
                 continue
             endpoints = await crawl_endpoints(url=url)
@@ -163,6 +236,15 @@ class ReconAgent:
                 url=url,
             )
             web_asset.endpoints = sorted(set(web_asset.endpoints) | set(endpoints))
+            await self._emit(
+                {
+                    "event": "recon_tool_result",
+                    "engagement_id": scope.engagement_id,
+                    "tool": "crawl_endpoints",
+                    "url": url,
+                    "endpoint_count": len(endpoints),
+                }
+            )
 
             # Update IP-based asset with URL if this URL points to a known IP
             parsed = urlparse(url)
@@ -170,8 +252,23 @@ class ReconAgent:
             if ip_key in assets_by_key and assets_by_key[ip_key].url is None:
                 assets_by_key[ip_key].url = url
                 assets_by_key[ip_key].asset_type = "web_app"
+        await self._emit(
+            {
+                "event": "recon_step_complete",
+                "engagement_id": scope.engagement_id,
+                "step": "endpoint_crawl",
+                "asset_count": len(assets_by_key),
+            }
+        )
 
         # 4) exposed files
+        await self._emit(
+            {
+                "event": "recon_step_started",
+                "engagement_id": scope.engagement_id,
+                "step": "exposed_files",
+            }
+        )
         for url in self._web_urls(assets_by_key):
             if self._is_forbidden_url(scope, url):
                 continue
@@ -187,8 +284,31 @@ class ReconAgent:
             for file in exposed:
                 existing[file.path] = file
             web_asset.exposed_files = [existing[p] for p in sorted(existing.keys())]
+            await self._emit(
+                {
+                    "event": "recon_tool_result",
+                    "engagement_id": scope.engagement_id,
+                    "tool": "check_exposed_files",
+                    "url": url,
+                    "exposed_count": len(exposed),
+                }
+            )
+        await self._emit(
+            {
+                "event": "recon_step_complete",
+                "engagement_id": scope.engagement_id,
+                "step": "exposed_files",
+            }
+        )
 
         # 5) Censys lookup
+        await self._emit(
+            {
+                "event": "recon_step_started",
+                "engagement_id": scope.engagement_id,
+                "step": "censys_lookup",
+            }
+        )
         for asset in assets_by_key.values():
             if not asset.ip or self._is_forbidden_host(scope, asset.ip):
                 continue
@@ -211,8 +331,32 @@ class ReconAgent:
                 current_services.values(),
                 key=lambda s: (s.port, s.service, s.version or ""),
             )
+            await self._emit(
+                {
+                    "event": "recon_tool_result",
+                    "engagement_id": scope.engagement_id,
+                    "tool": "censys_lookup",
+                    "ip": asset.ip,
+                    "ports": asset.open_ports,
+                    "vuln_count": len(asset.shodan_vulns),
+                }
+            )
+        await self._emit(
+            {
+                "event": "recon_step_complete",
+                "engagement_id": scope.engagement_id,
+                "step": "censys_lookup",
+            }
+        )
 
         # 6) tech fingerprinting
+        await self._emit(
+            {
+                "event": "recon_step_started",
+                "engagement_id": scope.engagement_id,
+                "step": "tech_fingerprint",
+            }
+        )
         for asset in assets_by_key.values():
             # Get tech from services
             if asset.services:
@@ -227,8 +371,31 @@ class ReconAgent:
                     continue
                 web_tech = await fingerprint_tech(asset.url)
                 asset.tech_stack = sorted(set(asset.tech_stack) | set(web_tech))
+            await self._emit(
+                {
+                    "event": "recon_tool_result",
+                    "engagement_id": scope.engagement_id,
+                    "tool": "fingerprint_tech",
+                    "asset_id": asset.asset_id,
+                    "tech_stack": asset.tech_stack,
+                }
+            )
+        await self._emit(
+            {
+                "event": "recon_step_complete",
+                "engagement_id": scope.engagement_id,
+                "step": "tech_fingerprint",
+            }
+        )
 
         # 7) GitHub secret scanning (per domain)
+        await self._emit(
+            {
+                "event": "recon_step_started",
+                "engagement_id": scope.engagement_id,
+                "step": "github_secrets",
+            }
+        )
         for domain in domains:
             secrets = await scan_github_secrets(
                 domain=domain,
@@ -237,23 +404,86 @@ class ReconAgent:
             # Attach secrets to all assets for this engagement
             for asset in assets_by_key.values():
                 asset.secrets_found.extend(secrets)
+            await self._emit(
+                {
+                    "event": "recon_tool_result",
+                    "engagement_id": scope.engagement_id,
+                    "tool": "scan_github_secrets",
+                    "domain": domain,
+                    "secrets_found": len(secrets),
+                }
+            )
+        await self._emit(
+            {
+                "event": "recon_step_complete",
+                "engagement_id": scope.engagement_id,
+                "step": "github_secrets",
+            }
+        )
 
         # 8) cloud resource probing (per domain)
+        await self._emit(
+            {
+                "event": "recon_step_started",
+                "engagement_id": scope.engagement_id,
+                "step": "cloud_probe",
+            }
+        )
         for domain in domains:
             cloud_issues = await probe_cloud_resources(domain=domain)
             # Attach cloud issues to all assets for this engagement
             for asset in assets_by_key.values():
                 asset.cloud_issues.extend(cloud_issues)
+            await self._emit(
+                {
+                    "event": "recon_tool_result",
+                    "engagement_id": scope.engagement_id,
+                    "tool": "probe_cloud_resources",
+                    "domain": domain,
+                    "cloud_issues": len(cloud_issues),
+                }
+            )
+        await self._emit(
+            {
+                "event": "recon_step_complete",
+                "engagement_id": scope.engagement_id,
+                "step": "cloud_probe",
+            }
+        )
 
         # 9) Gemini score once at the end
         collected_assets = list(assets_by_key.values())
+        await self._emit(
+            {
+                "event": "recon_step_started",
+                "engagement_id": scope.engagement_id,
+                "step": "gemini_scoring",
+                "asset_count": len(collected_assets),
+            }
+        )
         scored_assets = await self.scorer.score_assets(collected_assets)
+        await self._emit(
+            {
+                "event": "recon_step_complete",
+                "engagement_id": scope.engagement_id,
+                "step": "gemini_scoring",
+                "asset_count": len(scored_assets),
+                "assets": [a.model_dump(mode="json") for a in scored_assets],
+            }
+        )
 
         if self.persists_assets:
             await mongo.save_assets(self.db, scored_assets)
 
         logger.info(
             f"Recon cycle complete for {scope.engagement_id}: {len(scored_assets)} assets"
+        )
+        await self._emit(
+            {
+                "event": "recon_agent_complete",
+                "engagement_id": scope.engagement_id,
+                "asset_count": len(scored_assets),
+            }
         )
         return scored_assets
 

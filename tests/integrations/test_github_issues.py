@@ -15,6 +15,7 @@ Coverage:
 
 from __future__ import annotations
 
+import os
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -76,6 +77,14 @@ def _make_chain(**kwargs) -> AttackChain:
     )
     defaults.update(kwargs)
     return AttackChain(**defaults)
+
+
+def test_github_token_loaded_in_test_environment():
+    """
+    Guardrail test: confirms pytest sees GITHUB_TOKEN from shell/.env.
+    """
+    token = os.getenv("GITHUB_TOKEN", "").strip()
+    assert token, "GITHUB_TOKEN is empty in test environment."
 
 
 # ---------------------------------------------------------------------------

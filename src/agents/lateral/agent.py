@@ -9,6 +9,7 @@ import json
 import logging
 import re
 import uuid
+from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 from pydantic import BaseModel, ValidationError
 
@@ -266,9 +267,15 @@ class LateralAgent:
     decides pivot paths via tool calls (up to MAX_TOOL_ROUNDS per finding).
     """
 
-    def __init__(self, api_key: str | None = None, verbose_llm: bool = False):
+    def __init__(
+        self,
+        api_key: str | None = None,
+        verbose_llm: bool = False,
+        event_emitter: Callable[[dict], Awaitable[None]] | None = None,
+    ):
         self.api_key = api_key or get_settings().GEMINI_API_KEY
         self.verbose_llm = verbose_llm
+        self._event_emitter = event_emitter
         if not self.api_key:
             raise ValueError("GEMINI_API_KEY not set")
 
@@ -280,6 +287,14 @@ class LateralAgent:
             ) from exc
 
         self.client = genai.Client(api_key=self.api_key)
+
+    async def _emit(self, message: dict) -> None:
+        if self._event_emitter is None:
+            return
+        try:
+            await self._event_emitter(message)
+        except Exception:
+            logger.debug("Lateral event emit failed", exc_info=True)
 
     @staticmethod
     def _truncate_for_log(value, limit: int = LOG_SNIPPET_CHARS) -> str:
@@ -329,6 +344,14 @@ class LateralAgent:
             f.finding_id: f.model_dump(mode="json")
             for f in input.findings
         }
+        await self._emit(
+            {
+                "event": "lateral_agent_started",
+                "engagement_id": input.findings[0].engagement_id if input.findings else None,
+                "finding_count": len(input.findings),
+                "asset_graph_count": len(input.asset_graph),
+            }
+        )
 
         chains: list[AttackChain] = []
         for finding in input.findings:
@@ -336,11 +359,37 @@ class LateralAgent:
                 f"Processing finding {finding.finding_id} "
                 f"({finding.vulnerability_class}, severity={finding.severity})"
             )
+            await self._emit(
+                {
+                    "event": "lateral_finding_started",
+                    "engagement_id": finding.engagement_id,
+                    "finding_id": finding.finding_id,
+                    "vulnerability_class": finding.vulnerability_class,
+                    "severity": finding.severity,
+                    "finding": finding.model_dump(mode="json"),
+                }
+            )
             chain = await self._process_finding(finding, input.asset_graph, registry)
             if chain is not None:
                 chains.append(chain)
+                await self._emit(
+                    {
+                        "event": "lateral_chain_built",
+                        "engagement_id": finding.engagement_id,
+                        "finding_id": finding.finding_id,
+                        "chain": chain.model_dump(mode="json"),
+                    }
+                )
 
         logger.info(f"LateralAgent complete: {len(chains)} attack chains built")
+        await self._emit(
+            {
+                "event": "lateral_agent_complete",
+                "engagement_id": input.findings[0].engagement_id if input.findings else None,
+                "chain_count": len(chains),
+                "chains": [c.model_dump(mode="json") for c in chains],
+            }
+        )
         return chains
 
     async def _process_finding(
@@ -374,6 +423,14 @@ class LateralAgent:
         ]
 
         for round_num in range(MAX_TOOL_ROUNDS):
+            await self._emit(
+                {
+                    "event": "lateral_round_started",
+                    "engagement_id": finding.engagement_id,
+                    "finding_id": finding.finding_id,
+                    "round": round_num + 1,
+                }
+            )
             response = None
             for attempt in range(3):
                 try:
@@ -413,11 +470,28 @@ class LateralAgent:
                     f"Finding {finding.finding_id}: Gemini finished after "
                     f"{round_num + 1} round(s)"
                 )
+                await self._emit(
+                    {
+                        "event": "lateral_model_finished",
+                        "engagement_id": finding.engagement_id,
+                        "finding_id": finding.finding_id,
+                        "rounds": round_num + 1,
+                    }
+                )
                 return await self._generate_structured_final_chain(contents, finding)
 
             # Execute all tool calls and collect responses
             fn_response_parts = []
             for fc_part in function_calls:
+                await self._emit(
+                    {
+                        "event": "lateral_tool_call_started",
+                        "engagement_id": finding.engagement_id,
+                        "finding_id": finding.finding_id,
+                        "tool": fc_part.function_call.name,
+                        "args": dict(fc_part.function_call.args),
+                    }
+                )
                 result = await self._dispatch_tool_call(
                     fc_part.function_call, registry, asset_graph
                 )
@@ -440,6 +514,15 @@ class LateralAgent:
                     f"Tool {fc_part.function_call.name} returned "
                     f"{len(str(result))} chars"
                 )
+                await self._emit(
+                    {
+                        "event": "lateral_tool_call_complete",
+                        "engagement_id": finding.engagement_id,
+                        "finding_id": finding.finding_id,
+                        "tool": fc_part.function_call.name,
+                        "result": result,
+                    }
+                )
 
             contents.append(types.Content(role="user", parts=fn_response_parts))
 
@@ -447,6 +530,14 @@ class LateralAgent:
         logger.warning(
             f"Finding {finding.finding_id} hit MAX_TOOL_ROUNDS={MAX_TOOL_ROUNDS}. "
             "Requesting final summary."
+        )
+        await self._emit(
+            {
+                "event": "lateral_max_rounds_reached",
+                "engagement_id": finding.engagement_id,
+                "finding_id": finding.finding_id,
+                "max_rounds": MAX_TOOL_ROUNDS,
+            }
         )
         return await self._generate_structured_final_chain(contents, finding)
 
@@ -526,11 +617,27 @@ class LateralAgent:
                             parts=[types.Part.from_text(text=repair_prompt)],
                         )
                     )
+                    await self._emit(
+                        {
+                            "event": "lateral_structured_repair_requested",
+                            "engagement_id": finding.engagement_id,
+                            "finding_id": finding.finding_id,
+                            "error": last_error,
+                        }
+                    )
 
         logger.error(
             "Structured output failed after repair for %s: %s",
             finding.finding_id,
             last_error or "unknown validation error",
+        )
+        await self._emit(
+            {
+                "event": "lateral_structured_output_failed",
+                "engagement_id": finding.engagement_id,
+                "finding_id": finding.finding_id,
+                "error": last_error or "unknown validation error",
+            }
         )
         return None
 

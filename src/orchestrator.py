@@ -1,4 +1,3 @@
-import logging
 import os
 import uuid
 from collections.abc import Awaitable, Callable
@@ -11,8 +10,6 @@ from src.db import mongo
 from src.models.finding import Evidence, FindingDocument, LateralAgentInput
 from src.integrations.github_issues import create_issues_for_chains
 from src.models.scope import ScopeDocument
-
-logger = logging.getLogger(__name__)
 
 BroadcastFn = Callable[[dict], Awaitable[None]]
 
@@ -37,7 +34,7 @@ class Orchestrator:
             try:
                 await self._broadcast(message)
             except Exception:
-                logger.warning("broadcast failed for event %s", message.get("event"))
+                print(f"[orchestrator] WARNING: broadcast failed for event={message.get('event')}")
 
     async def run_cycle(self, scope: ScopeDocument) -> None:
         await self._emit({"event": "cycle_started", "engagement_id": scope.engagement_id})
@@ -62,7 +59,7 @@ class Orchestrator:
             findings = await self.exploit.run(eligible)
             await mongo.save_findings(self.db, findings)
         except NotImplementedError:
-            logger.warning("ExploitAgent is not implemented yet; skipping exploit stage.")
+            print("[orchestrator] WARNING: ExploitAgent is not implemented; skipping exploit stage.")
             findings = []
         await self._emit({
             "event": "exploit_complete",
@@ -86,10 +83,9 @@ class Orchestrator:
                     "finding_id": seeded.finding_id,
                     "affected_url": seeded.affected_url,
                 })
-                logger.warning(
-                    "Demo seed injected for engagement %s (finding_id=%s)",
-                    scope.engagement_id,
-                    seeded.finding_id,
+                print(
+                    "[orchestrator] WARNING: Demo seed injected "
+                    f"for engagement={scope.engagement_id} finding_id={seeded.finding_id}"
                 )
         if not multi_asset:
             await self._emit({
@@ -105,7 +101,7 @@ class Orchestrator:
                 LateralAgentInput(findings=multi_asset, asset_graph=all_assets)
             )
         except NotImplementedError:
-            logger.warning("LateralAgent is not implemented yet; skipping lateral stage.")
+            print("[orchestrator] WARNING: LateralAgent is not implemented; skipping lateral stage.")
             await self._emit({
                 "event": "cycle_complete",
                 "engagement_id": scope.engagement_id,
@@ -123,21 +119,38 @@ class Orchestrator:
         # --- GitHub Issues (optional — only when a repo URL is provided) ---
         if scope.github_repo_url:
             token = get_settings().GITHUB_TOKEN
+            print(
+                "[orchestrator] GitHub issue step: "
+                f"repo_url={scope.github_repo_url} chain_count={len(chains)} token_present={bool(token)}"
+            )
             if token:
                 issue_urls = await create_issues_for_chains(
                     chains=chains,
                     repo_url=scope.github_repo_url,
                     github_token=token,
                 )
+                print(
+                    "[orchestrator] GitHub issue step complete: "
+                    f"created={len(issue_urls)} repo_url={scope.github_repo_url}"
+                )
+                if not issue_urls:
+                    print(
+                        "[orchestrator] WARNING: GitHub issue step produced no issues "
+                        f"(repo={scope.github_repo_url}, chains={len(chains)}). "
+                        "See github_issues prints above for API details."
+                    )
                 await self._emit({
                     "event": "github_issues_created",
                     "engagement_id": scope.engagement_id,
                     "issue_urls": issue_urls,
                 })
             else:
-                logger.warning(
-                    "github_repo_url is set but GITHUB_TOKEN is empty; skipping issue creation."
+                print(
+                    "[orchestrator] WARNING: github_repo_url is set but GITHUB_TOKEN is empty; "
+                    "skipping issue creation."
                 )
+        else:
+            print("[orchestrator] GitHub issue step skipped: scope.github_repo_url is empty")
 
         await self._emit({"event": "cycle_complete", "engagement_id": scope.engagement_id})
 

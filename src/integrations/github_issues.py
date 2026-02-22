@@ -8,15 +8,12 @@ work-item for every discovered attack path.
 
 from __future__ import annotations
 
-import logging
 import re
 from urllib.parse import urlparse
 
 import httpx
 
 from src.models.attack_chain import AttackChain
-
-logger = logging.getLogger(__name__)
 
 _GITHUB_API = "https://api.github.com"
 _SEVERITY_LABEL_MAP = [
@@ -185,9 +182,14 @@ async def create_issues_for_chains(
         The HTML URLs of every newly created issue.
     """
     if not chains:
+        print("[github_issues] Skipped: no attack chains provided")
+        return []
+    if not github_token.strip():
+        print("[github_issues] Skipped: empty github_token")
         return []
 
     nwo = _parse_nwo(repo_url)
+    print(f"[github_issues] Starting: repo={nwo} chain_count={len(chains)}")
     headers = {
         "Authorization": f"Bearer {github_token}",
         "Accept": "application/vnd.github+json",
@@ -207,22 +209,29 @@ async def create_issues_for_chains(
                 "body": _build_issue_body(chain),
                 "labels": labels,
             }
-            resp = await client.post(
-                f"{_GITHUB_API}/repos/{nwo}/issues",
-                json=payload,
-            )
+            try:
+                resp = await client.post(
+                    f"{_GITHUB_API}/repos/{nwo}/issues",
+                    json=payload,
+                )
+            except Exception as exc:
+                print(
+                    f"[github_issues] ERROR: issue POST raised for chain={chain.chain_id} repo={nwo}: {exc}"
+                )
+                continue
             if resp.status_code == 201:
                 url = resp.json().get("html_url", "")
                 created_urls.append(url)
-                logger.info("Created GitHub issue for chain %s: %s", chain.chain_id, url)
+                print(f"[github_issues] Created issue for chain={chain.chain_id}: {url}")
             else:
-                logger.error(
-                    "Failed to create issue for chain %s: %s %s",
-                    chain.chain_id,
-                    resp.status_code,
-                    resp.text,
+                print(
+                    f"[github_issues] ERROR: failed to create issue for chain={chain.chain_id} "
+                    f"status={resp.status_code} body={resp.text}"
                 )
 
+    print(
+        f"[github_issues] Finished: repo={nwo} created={len(created_urls)} attempted={len(chains)}"
+    )
     return created_urls
 
 
@@ -238,7 +247,19 @@ async def _ensure_labels(client: httpx.AsyncClient, nwo: str) -> None:
     ]
     for label in desired:
         try:
-            await client.post(f"{_GITHUB_API}/repos/{nwo}/labels", json=label)
+            resp = await client.post(f"{_GITHUB_API}/repos/{nwo}/labels", json=label)
+            if resp.status_code in (201, 422):
+                print(
+                    f"[github_issues] Label ensured: repo={nwo} label={label['name']} status={resp.status_code}"
+                )
+            else:
+                print(
+                    f"[github_issues] WARNING: label ensure failed: repo={nwo} "
+                    f"label={label['name']} status={resp.status_code} body={resp.text}"
+                )
             # 201 = created, 422 = already exists — both are fine
-        except Exception:  # noqa: BLE001
-            pass
+        except Exception as exc:  # noqa: BLE001
+            print(
+                f"[github_issues] ERROR: label ensure raised: repo={nwo} "
+                f"label={label['name']} err={exc}"
+            )
