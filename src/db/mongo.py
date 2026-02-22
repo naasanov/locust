@@ -16,6 +16,13 @@ def get_db() -> AsyncIOMotorDatabase:
     return client[get_settings().MONGODB_DB]
 
 
+async def close_db() -> None:
+    global _client
+    if _client is not None:
+        _client.close()
+        _client = None
+
+
 # ---------------------------------------------------------------------------
 # Assets
 # ---------------------------------------------------------------------------
@@ -32,17 +39,16 @@ async def get_assets(
     db: AsyncIOMotorDatabase,
     engagement_id: str,
     min_score: float = 0.0,
+    limit: int | None = None,
 ) -> list[AssetDocument]:
-    cursor = (
-        db["assets"]
-        .find(
-            {
-                "engagement_id": engagement_id,
-                "attack_surface_score": {"$gte": min_score},
-            }
-        )
-        .sort("attack_surface_score", -1)
-    )
+    cursor = db["assets"].find(
+        {
+            "engagement_id": engagement_id,
+            "attack_surface_score": {"$gte": min_score},
+        }
+    ).sort("attack_surface_score", -1)
+    if limit is not None:
+        cursor = cursor.limit(limit)
     return [AssetDocument.model_validate(doc) async for doc in cursor]
 
 
