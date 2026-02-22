@@ -39,6 +39,7 @@ class AssetDocument(BaseModel):
     url: str | None = None
     open_ports: list[int] = []
     services: list[ServiceInfo] = []
+    tech_stack: list[str] = []
     endpoints: list[str] = []
     exposed_files: list[ExposedFile] = []
     shodan_vulns: list[str] = []

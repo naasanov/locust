@@ -10,7 +10,7 @@ app = FastAPI()
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 client = MongoClient(os.getenv("MONGODB_URI"))
-db = client["locust-backend"]
+db = client[os.getenv("MONGODB_DB", "artaas")]
 
 connected_clients: list[WebSocket] = []
 
