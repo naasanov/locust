@@ -113,15 +113,14 @@ async def run_full_recon_test(target_domain: str = "example.com", target_ip: str
             print(f"  Attack Surface Score: {asset.attack_surface_score:.2f}")
             print(f"  Score Reasoning: {asset.score_reasoning}")
 
-        # Print highest scoring asset as JSON in canonical AssetDocument schema format
+        # Print all assets as JSON in canonical AssetDocument schema (exploit agent input)
         if assets:
             import json
             print("\n" + "=" * 60)
-            print("ASSETDOCUMENT OUTPUT FORMAT (highest-score asset)")
+            print("EXPLOIT AGENT INPUT — ALL ASSETS (to_recon_output)")
             print("=" * 60)
-            best_asset = max(assets, key=lambda a: a.attack_surface_score)
-            asset_dict = best_asset.to_recon_output()
-            print(json.dumps(asset_dict, indent=2, default=str))
+            all_assets_output = [a.to_recon_output() for a in assets]
+            print(json.dumps(all_assets_output, indent=2, default=str))
 
         print("\n" + "=" * 60)
         print("TEST PASSED")
@@ -282,6 +281,20 @@ async def test_gemini_scoring():
         print(f"✗ Error: {e}")
         import traceback
         traceback.print_exc()
+
+
+@pytest.mark.asyncio
+async def test_full_recon_against_target():
+    """
+    Full integration test: run the complete recon pipeline against
+    129.212.180.119:3000 and print all assets as exploit-agent input JSON.
+    """
+    assets = await run_full_recon_test(
+        target_domain="none",
+        target_ip="129.212.180.119",
+    )
+    assert assets is not None, "Recon returned no assets"
+    assert len(assets) > 0, "Expected at least one asset"
 
 
 if __name__ == "__main__":
