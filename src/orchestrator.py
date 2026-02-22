@@ -10,6 +10,7 @@ from src.config import get_settings
 from src.db import mongo
 from src.models.finding import Evidence, FindingDocument, LateralAgentInput
 from src.integrations.github_issues import create_issues_for_chains
+from src.integrations.solana_anchor import anchor_chains
 from src.models.scope import ScopeDocument
 
 logger = logging.getLogger(__name__)
@@ -119,6 +120,28 @@ class Orchestrator:
             "engagement_id": scope.engagement_id,
             "chain_count": len(chains),
         })
+
+        # --- Solana anchoring (optional — only when a keypair is configured) ---
+        settings = get_settings()
+        if settings.AGENT_KEYPAIR_PATH:
+            chains = await anchor_chains(
+                chains=chains,
+                rpc_url=settings.SOLANA_RPC_URL,
+                keypair_path=settings.AGENT_KEYPAIR_PATH,
+            )
+            anchored = [c for c in chains if c.on_chain_tx]
+            if anchored:
+                for c in anchored:
+                    await self.db["attack_chains"].update_one(
+                        {"chain_id": c.chain_id, "engagement_id": c.engagement_id},
+                        {"$set": {"on_chain_tx": c.on_chain_tx}},
+                    )
+                await self._emit({
+                    "event": "solana_anchored",
+                    "engagement_id": scope.engagement_id,
+                    "chain_count": len(anchored),
+                    "tx_signatures": [c.on_chain_tx for c in anchored],
+                })
 
         # --- GitHub Issues (optional — only when a repo URL is provided) ---
         if scope.github_repo_url:
