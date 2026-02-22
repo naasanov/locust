@@ -1,19 +1,22 @@
 [build-system]
-requires = ["setuptools>=61.0"]
+requires = ["setuptools>=61"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "uncp"
 version = "0.1.0"
-description = "Unified Network Control Platform - Recon Agent"
-readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 dependencies = [
-    "google-generativeai>=0.8.0",
+    "pydantic>=2.0",
+    "pydantic-settings",
+    "motor",
+    "fastapi",
+    "uvicorn[standard]",
+    "google-generativeai",
+    "httpx",
+    "python-dotenv",
+    # Recon agent deps
     "python-nmap>=0.7.1",
-    "httpx>=0.27.0",
-    "python-dotenv>=1.0.0",
-    "pymongo>=4.8.0",
     "shodan>=1.31.0",
 ]
 
@@ -29,4 +32,4 @@ pythonpath = ["."]
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["agents*", "config*", "db*"]
+include = ["src*"]

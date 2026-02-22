@@ -22,3 +22,25 @@
 .claude_history
 claude_desktop/
 .anthropic/
+
+# Environment
+.venv/
+venv/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+*.egg-info
+dist/
+build/
+*.egg
+.pytest_cache/
+
+# Logs
+*.log
+
+# macOS
+.DS_Store

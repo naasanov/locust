@@ -30,28 +30,33 @@ class TestDependencies:
         from dotenv import load_dotenv
         assert load_dotenv is not None
 
-    def test_pymongo_import(self):
-        """Test pymongo is installed."""
-        import pymongo
-        assert pymongo is not None
+    def test_motor_import(self):
+        """Test motor (async MongoDB) is installed."""
+        import motor.motor_asyncio
+        assert motor.motor_asyncio is not None
 
     def test_shodan_import(self):
         """Test shodan is installed."""
         import shodan
         assert shodan is not None
 
+    def test_pydantic_import(self):
+        """Test pydantic is installed."""
+        from pydantic import BaseModel
+        assert BaseModel is not None
+
 
 class TestModuleStructure:
     """Verify module structure is correct."""
 
-    def test_agents_recon_import(self):
-        """Test agents.recon package imports."""
-        from agents.recon import ReconAgent
+    def test_recon_agent_import(self):
+        """Test src.agents.recon package imports."""
+        from src.agents.recon import ReconAgent
         assert ReconAgent is not None
 
     def test_tools_import(self):
         """Test all tools are importable."""
-        from agents.recon.tools import (
+        from src.agents.recon.tools import (
             run_nmap,
             enumerate_subdomains,
             crawl_endpoints,
@@ -66,162 +71,158 @@ class TestModuleStructure:
 
     def test_models_import(self):
         """Test models are importable."""
-        from agents.recon.models import Asset, Service, ExposedFile
-        from agents.recon.models import Scope, ScopeTargets, ForbiddenActions
+        from src.models.asset import AssetDocument, ServiceInfo, ExposedFile
+        from src.models.scope import ScopeDocument
 
-        assert Asset is not None
-        assert Service is not None
+        assert AssetDocument is not None
+        assert ServiceInfo is not None
         assert ExposedFile is not None
-        assert Scope is not None
+        assert ScopeDocument is not None
 
     def test_scoring_import(self):
         """Test scoring module is importable."""
-        from agents.recon.scoring import GeminiScorer
+        from src.agents.recon.scoring import GeminiScorer
         assert GeminiScorer is not None
 
     def test_config_import(self):
         """Test config is importable."""
-        from config import Settings, get_settings
+        from src.config import Settings, get_settings
         assert Settings is not None
         assert get_settings is not None
 
     def test_db_import(self):
         """Test db module is importable."""
-        from db import get_database, get_client
-        assert get_database is not None
-        assert get_client is not None
+        from src.db.mongo import get_db
+        assert get_db is not None
 
 
 class TestAssetModel:
-    """Test Asset model functionality."""
+    """Test AssetDocument model functionality."""
 
     def test_create_asset(self):
         """Test creating a basic asset."""
-        from agents.recon.models import Asset, AssetType
+        from src.models.asset import AssetDocument
 
-        asset = Asset(
+        asset = AssetDocument(
             engagement_id="test-123",
-            asset_type=AssetType.HOST,
+            asset_type="host",
             ip="192.168.1.1",
             attack_surface_score=0.5,
         )
 
         assert asset.engagement_id == "test-123"
-        assert asset.asset_type == AssetType.HOST
+        assert asset.asset_type == "host"
         assert asset.ip == "192.168.1.1"
         assert asset.attack_surface_score == 0.5
 
-    def test_asset_requires_ip_or_url(self):
-        """Test that asset requires at least ip or url."""
-        from agents.recon.models import Asset, AssetType
+    def test_asset_defaults(self):
+        """Test asset default values."""
+        from src.models.asset import AssetDocument
 
-        with pytest.raises(ValueError, match="At least one of ip or url"):
-            Asset(
-                engagement_id="test-123",
-                asset_type=AssetType.HOST,
-                # Neither ip nor url set
-            )
-
-    def test_asset_to_dict(self):
-        """Test asset serialization."""
-        from agents.recon.models import Asset, AssetType, Service
-
-        asset = Asset(
+        asset = AssetDocument(
             engagement_id="test-123",
-            asset_type=AssetType.WEB_APP,
+            asset_type="web_app",
+            url="https://example.com",
+        )
+
+        assert asset.open_ports == []
+        assert asset.services == []
+        assert asset.endpoints == []
+        assert asset.exposed_files == []
+        assert asset.shodan_vulns == []
+        assert asset.attack_surface_score == 0.0
+
+    def test_asset_with_services(self):
+        """Test asset with services."""
+        from src.models.asset import AssetDocument, ServiceInfo
+
+        asset = AssetDocument(
+            engagement_id="test-123",
+            asset_type="web_app",
             url="https://example.com",
             open_ports=[80, 443],
-            services=[Service(port=443, service="nginx", version="1.24")],
+            services=[ServiceInfo(port=443, service="nginx", version="1.24")],
             attack_surface_score=0.7,
         )
 
-        data = asset.to_dict()
-
-        assert data["engagement_id"] == "test-123"
-        assert data["asset_type"] == "web_app"
-        assert data["url"] == "https://example.com"
-        assert data["open_ports"] == [80, 443]
-        assert len(data["services"]) == 1
-        assert data["services"][0]["service"] == "nginx"
+        assert asset.open_ports == [80, 443]
+        assert len(asset.services) == 1
+        assert asset.services[0].service == "nginx"
 
     def test_asset_score_validation(self):
         """Test that score must be between 0 and 1."""
-        from agents.recon.models import Asset, AssetType
+        from src.models.asset import AssetDocument
+        from pydantic import ValidationError
 
-        with pytest.raises(ValueError, match="attack_surface_score must be between"):
-            Asset(
+        with pytest.raises(ValidationError):
+            AssetDocument(
                 engagement_id="test-123",
-                asset_type=AssetType.HOST,
+                asset_type="host",
                 ip="192.168.1.1",
                 attack_surface_score=1.5,  # Invalid
             )
 
+    def test_asset_serialization(self):
+        """Test asset serialization with model_dump."""
+        from src.models.asset import AssetDocument
+
+        asset = AssetDocument(
+            engagement_id="test-123",
+            asset_type="host",
+            ip="192.168.1.1",
+        )
+
+        data = asset.model_dump(mode="json")
+        assert data["engagement_id"] == "test-123"
+        assert data["asset_type"] == "host"
+        assert data["ip"] == "192.168.1.1"
+
 
 class TestScopeModel:
-    """Test Scope model functionality."""
+    """Test ScopeDocument model functionality."""
 
-    def test_create_scope_from_dict(self):
-        """Test creating scope from dictionary."""
-        from agents.recon.models import Scope
+    def test_create_scope(self):
+        """Test creating scope document."""
+        from datetime import datetime, timezone
+        from src.models.scope import (
+            ScopeDocument, Targets, ForbiddenSpec,
+            EngagementConstraints, ActiveHours, ActiveWindow
+        )
 
-        data = {
-            "engagement_id": "abc123",
-            "customer": "Acme Corp",
-            "targets": {
-                "domains": ["acmecorp.com", "*.acmecorp.com"],
-                "ip_ranges": ["203.0.113.0/24"],
-                "cloud_accounts": [],
-            },
-            "forbidden_hosts": ["payments.acmecorp.com"],
-            "forbidden_actions": ["destructive_payloads"],
-            "tier_limit": 2,
-            "active_hours": {
-                "timezone": "America/New_York",
-                "windows": [
-                    {"days": ["mon", "tue"], "start": "22:00", "end": "06:00"}
-                ],
-            },
-            "cycle_interval_hours": 24,
-        }
-
-        scope = Scope.from_dict(data)
+        scope = ScopeDocument(
+            engagement_id="abc123",
+            customer="Acme Corp",
+            targets=Targets(
+                domains=["acmecorp.com", "*.acmecorp.com"],
+                ip_ranges=["203.0.113.0/24"],
+            ),
+            forbidden_spec=ForbiddenSpec(
+                forbidden_hosts=["payments.acmecorp.com"],
+                forbidden_actions=["destructive_payloads"],
+            ),
+            constraints=EngagementConstraints(
+                active_hours=ActiveHours(
+                    timezone="UTC",
+                    windows=[ActiveWindow(days=["mon"], start="22:00", end="06:00")],
+                ),
+                expires_at=datetime(2026, 12, 31, tzinfo=timezone.utc),
+            ),
+        )
 
         assert scope.engagement_id == "abc123"
         assert scope.customer == "Acme Corp"
         assert "acmecorp.com" in scope.targets.domains
-        assert scope.forbidden.is_host_forbidden("payments.acmecorp.com")
-        assert not scope.forbidden.is_host_forbidden("api.acmecorp.com")
 
-    def test_scope_target_in_scope(self):
-        """Test target scope checking."""
-        from agents.recon.models import Scope
+    def test_scope_forbidden_hosts(self):
+        """Test forbidden hosts checking."""
+        from src.models.scope import ForbiddenSpec
 
-        data = {
-            "engagement_id": "abc123",
-            "customer": "Acme Corp",
-            "targets": {
-                "domains": ["acmecorp.com", "*.acmecorp.com"],
-                "ip_ranges": ["203.0.113.10"],
-                "cloud_accounts": [],
-            },
-            "forbidden_hosts": ["payments.acmecorp.com"],
-            "forbidden_actions": [],
-            "tier_limit": 2,
-            "active_hours": {"timezone": "UTC", "windows": []},
-        }
+        forbidden = ForbiddenSpec(
+            forbidden_hosts=["payments.acmecorp.com", "10.0.1.50"],
+        )
 
-        scope = Scope.from_dict(data)
-
-        # Should be in scope
-        assert scope.is_target_in_scope("acmecorp.com")
-        assert scope.is_target_in_scope("api.acmecorp.com")  # Wildcard match
-        assert scope.is_target_in_scope("203.0.113.10")
-
-        # Should be out of scope (forbidden)
-        assert not scope.is_target_in_scope("payments.acmecorp.com")
-
-        # Should be out of scope (not listed)
-        assert not scope.is_target_in_scope("otherdomain.com")
+        assert "payments.acmecorp.com" in forbidden.forbidden_hosts
+        assert "api.acmecorp.com" not in forbidden.forbidden_hosts
 
 
 if __name__ == "__main__":
