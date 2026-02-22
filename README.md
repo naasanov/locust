@@ -1,60 +1,44 @@
 # uncp
 
-## REC-04 Wiring Runbook
+## INF-03 Server Runbook
 
 ### 1. Start backend API
 
 ```bash
-uvicorn src.api.app:app --reload --port 8000
+uvicorn server.main:app --reload --port 8000
 ```
 
-### 2. Trigger a recon cycle
+### 2. Check health
 
 ```bash
-curl -X POST http://localhost:8000/api/recon/run \
-  -H "Content-Type: application/json" \
-  -d '{
-    "scope": {
-      "engagement_id": "abc123",
-      "customer": "Acme Corp",
-      "targets": {
-        "domains": ["acmecorp.com"],
-        "ip_ranges": ["203.0.113.10"],
-        "cloud_accounts": []
-      },
-      "forbidden_spec": {
-        "forbidden_hosts": [],
-        "forbidden_actions": [],
-        "tier_limit": 2
-      },
-      "constraints": {
-        "active_hours": {
-          "timezone": "UTC",
-          "windows": [{"days": ["mon"], "start": "00:00", "end": "23:59"}]
-        },
-        "cycle_interval_hours": 24,
-        "expires_at": "2026-06-01T00:00:00Z",
-        "monthly_fee_usdc": 500
-      }
-    }
-  }'
+curl http://localhost:8000/api/health
 ```
 
-This endpoint is asynchronous and returns a `run_id` immediately.
-
-### 3. Poll recon run status
+### 3. Query assets
 
 ```bash
-curl "http://localhost:8000/api/recon/run/<run_id>"
+curl "http://localhost:8000/api/assets/<engagement_id>"
 ```
 
-### 4. Verify assets in DB/API
+### 4. Query findings
 
 ```bash
-curl "http://localhost:8000/api/assets?engagement_id=abc123&min_score=0.0"
+curl "http://localhost:8000/api/findings/<engagement_id>"
 ```
 
-### 5. Run dashboard
+### 5. Query attack chains
+
+```bash
+curl "http://localhost:8000/api/chains/<engagement_id>"
+```
+
+### 6. Global status
+
+```bash
+curl http://localhost:8000/api/status
+```
+
+### 7. Run dashboard
 
 ```bash
 cd frontend
