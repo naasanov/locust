@@ -12,9 +12,10 @@ dependencies = [
     "motor",
     "fastapi",
     "uvicorn[standard]",
-    "google-generativeai",
+    "google-genai",
     "httpx",
     "python-dotenv",
+    "pymongo",
     # Recon agent deps
     "python-nmap>=0.7.1",
     "shodan>=1.31.0",

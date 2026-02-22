@@ -2,8 +2,6 @@
 
 import os
 
-import google.generativeai as genai
-
 from src.models.asset import AssetDocument
 
 
@@ -15,7 +13,7 @@ class GeminiScorer:
     Called once at the end after all deterministic tools have run.
     """
 
-    MODEL_NAME = "gemini-1.5-flash"
+    MODEL_NAME = "gemini-2.0-flash"
 
     SCORING_PROMPT = """You are a security analyst scoring the attack surface of discovered assets.
 
@@ -43,8 +41,15 @@ Respond with ONLY a JSON object in this exact format:
         if not self.api_key:
             raise ValueError("GEMINI_API_KEY not set")
 
-        genai.configure(api_key=self.api_key)
-        self.model = genai.GenerativeModel(self.MODEL_NAME)
+        try:
+            from google import genai
+        except ImportError as exc:
+            raise ImportError(
+                "google-genai is required for Gemini scoring. "
+                "Install it with: pip install google-genai"
+            ) from exc
+
+        self.client = genai.Client(api_key=self.api_key)
 
     async def score_asset(self, asset: AssetDocument) -> AssetDocument:
         """

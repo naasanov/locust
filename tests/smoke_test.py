@@ -5,15 +5,17 @@ Run with: pytest tests/smoke_test.py -v
 """
 
 import pytest
+from importlib.util import find_spec
 
 
 class TestDependencies:
     """Verify all required dependencies are installed."""
 
-    def test_google_generativeai_import(self):
-        """Test google-generativeai is installed."""
-        import google.generativeai as genai
-        assert genai is not None
+    def test_google_genai_import(self):
+        """Test google-genai is installed."""
+        assert find_spec("google.genai") is not None, (
+            "google-genai is missing. Install with: pip install google-genai"
+        )
 
     def test_python_nmap_import(self):
         """Test python-nmap is installed."""
