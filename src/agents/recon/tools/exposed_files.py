@@ -139,7 +139,7 @@ async def _check_single_file(
     path: str,
     timeout: float,
 ) -> ExposedFile | None:
-    """Check if a single file is exposed."""
+    """Check if a single file is exposed and validate content."""
     url = f"{base_url}{path}"
 
     try:
@@ -148,34 +148,36 @@ async def _check_single_file(
             follow_redirects=False,
             verify=False,
         ) as client:
-            response = await client.head(url)
+            # Always do GET to validate content (HEAD doesn't give us content)
+            response = await client.get(url)
 
             # Check for success status codes
-            if response.status_code in (200, 403):
-                # 403 might indicate file exists but access denied
-                # Still worth reporting
+            if response.status_code == 200:
+                content = response.text
 
-                size = None
-                content_length = response.headers.get("content-length")
-                if content_length:
-                    try:
-                        size = int(content_length)
-                    except ValueError:
-                        pass
+                # Skip if it looks like an error page or SPA fallback
+                if _is_error_page(content, path):
+                    return None
 
-                # For 200, verify it's not a generic error page
-                if response.status_code == 200:
-                    # Do a GET to check content
-                    get_response = await client.get(url)
+                # Validate content matches expected file type
+                if not _validate_file_content(content, path):
+                    logger.debug(f"Content validation failed for {path}")
+                    return None
 
-                    # Skip if it looks like an error page
-                    if _is_error_page(get_response.text, path):
-                        return None
-
-                    size = len(get_response.content)
-
-                logger.debug(f"Found exposed file: {path}")
+                size = len(response.content)
+                logger.debug(f"Found exposed file: {path} ({size} bytes)")
                 return ExposedFile(path=path, size=size)
+
+            elif response.status_code == 403:
+                # 403 might indicate file exists but access denied
+                # But first check if it's a generic WAF/security challenge page
+                content = response.text
+                if _is_security_challenge(content):
+                    logger.debug(f"403 appears to be WAF/security challenge for {path}")
+                    return None
+                # Only report if it seems like a real access denied for a specific file
+                logger.debug(f"Found forbidden file (403): {path}")
+                return ExposedFile(path=path, size=None)
 
     except httpx.TimeoutException:
         pass
@@ -187,8 +189,41 @@ async def _check_single_file(
     return None
 
 
+def _is_security_challenge(content: str) -> bool:
+    """
+    Detect WAF/security challenge pages that return 403 for all requests.
+
+    These pages block bots and return 403 regardless of whether the path exists.
+    """
+    content_lower = content.lower()
+
+    # Common security challenge indicators
+    challenge_indicators = [
+        "security checkpoint",
+        "vercel security",
+        "cloudflare",
+        "captcha",
+        "challenge-platform",
+        "ddos protection",
+        "access denied",
+        "bot protection",
+        "human verification",
+        "please wait while we verify",
+        "checking your browser",
+        "just a moment",
+        "ray id",  # Cloudflare
+        "cf-ray",  # Cloudflare
+        "akamai",
+        "incapsula",
+        "sucuri",
+        "imperva",
+    ]
+
+    return any(indicator in content_lower for indicator in challenge_indicators)
+
+
 def _is_error_page(content: str, expected_path: str) -> bool:
-    """Check if response looks like a generic error page."""
+    """Check if response looks like a generic error page or SPA fallback."""
     content_lower = content.lower()
 
     # Common error page indicators
@@ -218,4 +253,115 @@ def _is_error_page(content: str, expected_path: str) -> bool:
         ):
             return True
 
+    # SPA detection - if this looks like HTML but we're checking for a non-HTML file
+    if _is_spa_fallback(content, expected_path):
+        return True
+
     return False
+
+
+def _is_spa_fallback(content: str, expected_path: str) -> bool:
+    """
+    Detect SPA fallback pages that return index.html for all routes.
+
+    SPAs often return 200 OK with HTML content for any path,
+    which creates false positives for sensitive file detection.
+    """
+    content_lower = content.lower()
+
+    # Files that should NOT be HTML
+    non_html_extensions = [
+        ".env", ".git", ".sql", ".json", ".yml", ".yaml", ".xml",
+        ".php", ".py", ".rb", ".js", ".ts", ".lock", ".txt",
+        ".key", ".pem", ".pub", "id_rsa", "credentials",
+        ".htaccess", ".htpasswd", ".dockerignore", "Dockerfile",
+        "Gemfile", "Pipfile", "Jenkinsfile", "Makefile",
+    ]
+
+    # Check if this is a file type that shouldn't be HTML
+    is_non_html_file = any(
+        expected_path.lower().endswith(ext) or ext in expected_path.lower()
+        for ext in non_html_extensions
+    )
+
+    if not is_non_html_file:
+        return False
+
+    # Detect HTML content
+    html_indicators = [
+        "<!doctype html",
+        "<html",
+        "<head>",
+        "<body>",
+        "<script",
+        "<link rel=",
+        "<meta charset",
+    ]
+
+    is_html = any(indicator in content_lower for indicator in html_indicators)
+
+    if is_html:
+        # This is HTML but we expected a config file - likely SPA fallback
+        return True
+
+    return False
+
+
+def _validate_file_content(content: str, path: str) -> bool:
+    """
+    Validate that the response content matches expected file type.
+
+    Returns True if content looks legitimate for the file type.
+    """
+    content_stripped = content.strip()
+    content_lower = content.lower()
+
+    # .env files should have KEY=value format
+    if ".env" in path:
+        lines = content_stripped.split("\n")
+        env_lines = [l for l in lines if "=" in l and not l.strip().startswith("#")]
+        return len(env_lines) > 0
+
+    # .git/config should have git config format
+    if ".git/config" in path:
+        return "[core]" in content or "[remote" in content or "[branch" in content
+
+    # .git/HEAD should reference a branch
+    if ".git/HEAD" in path:
+        return content_stripped.startswith("ref: ") or len(content_stripped) == 40
+
+    # JSON files should be valid JSON-ish
+    if path.endswith(".json"):
+        return content_stripped.startswith("{") or content_stripped.startswith("[")
+
+    # YAML files should have YAML structure
+    if path.endswith((".yml", ".yaml")):
+        return ":" in content and not content_stripped.startswith("<")
+
+    # SQL files should have SQL keywords
+    if path.endswith(".sql"):
+        sql_keywords = ["CREATE", "INSERT", "SELECT", "DROP", "ALTER", "TABLE"]
+        return any(kw in content.upper() for kw in sql_keywords)
+
+    # PHP files should have PHP tags
+    if path.endswith(".php"):
+        return "<?php" in content or "<?" in content
+
+    # robots.txt should have robot directives
+    if "robots.txt" in path:
+        return "user-agent" in content_lower or "disallow" in content_lower or "allow" in content_lower
+
+    # SSH keys
+    if "id_rsa" in path and ".pub" not in path:
+        return "-----BEGIN" in content and "PRIVATE KEY" in content
+
+    if "id_rsa.pub" in path:
+        return content_stripped.startswith("ssh-rsa ") or content_stripped.startswith("ssh-ed25519 ")
+
+    # AWS credentials
+    if "credentials" in path and "aws" in path.lower():
+        return "[default]" in content or "aws_access_key_id" in content_lower
+
+    # Default: if we can't validate specifically, it's probably fine if it's not HTML
+    html_indicators = ["<!doctype", "<html", "<head>", "<body>"]
+    return not any(ind in content_lower for ind in html_indicators)

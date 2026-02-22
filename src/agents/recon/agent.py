@@ -15,7 +15,11 @@ from .tools import (
     enumerate_subdomains,
     crawl_endpoints,
     check_exposed_files,
-    shodan_lookup,
+    censys_lookup,
+    fingerprint_tech,
+    fingerprint_from_services,
+    scan_github_secrets,
+    probe_cloud_resources,
 )
 from .scoring import GeminiScorer
 
@@ -27,7 +31,7 @@ class ReconAgent:
     Deterministic reconnaissance agent.
 
     Architecture:
-    - All five tools run every time, unconditionally, in fixed order
+    - All tools run every time, unconditionally, in fixed order
     - No LLM in the collection loop
     - Gemini Flash called ONCE at the end to score and prioritize
 
@@ -36,8 +40,11 @@ class ReconAgent:
     2. enumerate_subdomains - Subdomain discovery
     3. crawl_endpoints - HTTP endpoint crawling
     4. check_exposed_files - Sensitive file detection
-    5. shodan_lookup - Vulnerability enrichment
-    6. gemini_scorer - Attack surface scoring (LLM)
+    5. censys_lookup - Vulnerability enrichment
+    6. fingerprint_tech - Technology stack detection
+    7. scan_github_secrets - GitHub secret scanning
+    8. probe_cloud_resources - Cloud storage enumeration
+    9. gemini_scorer - Attack surface scoring (LLM)
     """
 
     persists_assets = True
@@ -45,7 +52,9 @@ class ReconAgent:
     def __init__(
         self,
         gemini_api_key: str | None = None,
+        censys_api_key: str | None = None,
         shodan_api_key: str | None = None,
+        github_token: str | None = None,
         db: AsyncIOMotorDatabase | None = None,
         scorer: GeminiScorer | None = None,
         persist_assets: bool = True,
@@ -55,11 +64,14 @@ class ReconAgent:
 
         Args:
             gemini_api_key: API key for Gemini Flash scoring
-            shodan_api_key: API key for Shodan lookups
+            censys_api_key: API key for Censys lookups
+            shodan_api_key: Deprecated alias for `censys_api_key`
+            github_token: GitHub personal access token for secret scanning
         """
         self.gemini_api_key = gemini_api_key
         self._scorer = scorer
-        self.shodan_api_key = shodan_api_key
+        self.censys_api_key = censys_api_key or shodan_api_key
+        self.github_token = github_token
         self.db = db or get_db()
         self.persists_assets = persist_assets
 
@@ -176,11 +188,11 @@ class ReconAgent:
                 existing[file.path] = file
             web_asset.exposed_files = [existing[p] for p in sorted(existing.keys())]
 
-        # 5) shodan lookup
+        # 5) Censys lookup
         for asset in assets_by_key.values():
             if not asset.ip or self._is_forbidden_host(scope, asset.ip):
                 continue
-            enrichment = await shodan_lookup(asset.ip, api_key=self.shodan_api_key)
+            enrichment = await censys_lookup(asset.ip, api_key=self.censys_api_key)
 
             asset.shodan_vulns = sorted(
                 set(asset.shodan_vulns) | set(enrichment.get("vulns", []))
@@ -200,7 +212,40 @@ class ReconAgent:
                 key=lambda s: (s.port, s.service, s.version or ""),
             )
 
-        # 6) Gemini score once at the end
+        # 6) tech fingerprinting
+        for asset in assets_by_key.values():
+            # Get tech from services
+            if asset.services:
+                service_tech = await fingerprint_from_services(
+                    [{"service": s.service, "version": s.version} for s in asset.services]
+                )
+                asset.tech_stack = sorted(set(asset.tech_stack) | set(service_tech))
+
+            # Get tech from HTTP response
+            if asset.url:
+                if self._is_forbidden_url(scope, asset.url):
+                    continue
+                web_tech = await fingerprint_tech(asset.url)
+                asset.tech_stack = sorted(set(asset.tech_stack) | set(web_tech))
+
+        # 7) GitHub secret scanning (per domain)
+        for domain in domains:
+            secrets = await scan_github_secrets(
+                domain=domain,
+                github_token=self.github_token,
+            )
+            # Attach secrets to all assets for this engagement
+            for asset in assets_by_key.values():
+                asset.secrets_found.extend(secrets)
+
+        # 8) cloud resource probing (per domain)
+        for domain in domains:
+            cloud_issues = await probe_cloud_resources(domain=domain)
+            # Attach cloud issues to all assets for this engagement
+            for asset in assets_by_key.values():
+                asset.cloud_issues.extend(cloud_issues)
+
+        # 9) Gemini score once at the end
         collected_assets = list(assets_by_key.values())
         scored_assets = await self.scorer.score_assets(collected_assets)
 
@@ -234,6 +279,7 @@ class ReconAgent:
         current.open_ports = sorted(set(current.open_ports) | set(asset.open_ports))
         current.endpoints = sorted(set(current.endpoints) | set(asset.endpoints))
         current.shodan_vulns = sorted(set(current.shodan_vulns) | set(asset.shodan_vulns))
+        current.tech_stack = sorted(set(current.tech_stack) | set(asset.tech_stack))
 
         services = {
             (service.port, service.service, service.version): service
@@ -249,6 +295,18 @@ class ReconAgent:
         for file in asset.exposed_files:
             exposed[file.path] = file
         current.exposed_files = [exposed[p] for p in sorted(exposed.keys())]
+
+        # Merge secrets (dedupe by value)
+        secrets_by_value = {s.value: s for s in current.secrets_found}
+        for secret in asset.secrets_found:
+            secrets_by_value[secret.value] = secret
+        current.secrets_found = list(secrets_by_value.values())
+
+        # Merge cloud issues (dedupe by resource)
+        issues_by_resource = {i.resource: i for i in current.cloud_issues}
+        for issue in asset.cloud_issues:
+            issues_by_resource[issue.resource] = issue
+        current.cloud_issues = list(issues_by_resource.values())
 
     @staticmethod
     def _normalized_domains(scope: ScopeDocument) -> list[str]:

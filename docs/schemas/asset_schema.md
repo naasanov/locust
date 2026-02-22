@@ -37,7 +37,7 @@ This document defines the output schema for assets discovered by the Recon Agent
 | `services` | Service[] | No | Service fingerprints from nmap/banner grabbing |
 | `endpoints` | string[] | No | Discovered HTTP endpoints from crawling |
 | `exposed_files` | ExposedFile[] | No | Sensitive files found (e.g., `.env`, `.git/config`) |
-| `shodan_vulns` | string[] | No | CVE IDs from Shodan lookup |
+| `shodan_vulns` | string[] | No | CVE IDs from Censys lookup (legacy field name) |
 | `attack_surface_score` | float | Yes | 0.0 - 1.0 score from Gemini Flash |
 
 ## Nested Types
@@ -99,7 +99,7 @@ Assets are stored in the `assets` collection with additional metadata:
     "discovered_at": "2026-02-21T22:30:00Z",
     "last_seen": "2026-02-21T22:30:00Z",
     "recon_cycle": 1,
-    "tool_sources": ["nmap", "crawl", "shodan"]
+    "tool_sources": ["nmap", "crawl", "censys"]
   }
 }
 ```
@@ -114,7 +114,7 @@ Each recon tool populates specific fields:
 | `enumerate_subdomains` | Creates new assets with `asset_type: subdomain` |
 | `crawl_endpoints` | `url`, `endpoints` |
 | `check_exposed_files` | `exposed_files` |
-| `shodan_lookup` | `shodan_vulns`, additional `services` |
+| `censys_lookup` | `shodan_vulns`, additional `services` |
 | `gemini_scorer` | `attack_surface_score` |
 
 ## Indexing Strategy

@@ -98,7 +98,7 @@ Respond with ONLY valid JSON in this exact format:
             assets_json=json.dumps(assets_payload, indent=2, sort_keys=True)
         )
 
-        # Try Gemini API, fall back to heuristic scoring on quota errors
+        # Gemini is required for scoring in this pipeline; no heuristic fallback.
         try:
             loop = asyncio.get_event_loop()
             response = await loop.run_in_executor(
@@ -108,16 +108,20 @@ Respond with ONLY valid JSON in this exact format:
                     contents=prompt,
                 ),
             )
+            logger.info(
+                "Gemini scoring API call succeeded (model=%s, assets=%d)",
+                self.MODEL_NAME,
+                len(assets),
+            )
             text = self._extract_response_text(response)
             parsed = self._parse_scores(text, len(assets))
         except Exception as e:
-            error_str = str(e)
-            if "429" in error_str or "RESOURCE_EXHAUSTED" in error_str:
-                logger.warning(
-                    "Gemini API quota exhausted, falling back to heuristic scoring"
-                )
-                return self._heuristic_score_assets(assets)
-            raise
+            logger.error(
+                "Gemini scoring API call failed (model=%s): %s",
+                self.MODEL_NAME,
+                e,
+            )
+            raise RuntimeError("Gemini scoring failed; fallback disabled.") from e
 
         for idx, asset in enumerate(assets):
             score_entry = parsed.get(idx)
@@ -146,8 +150,11 @@ Respond with ONLY valid JSON in this exact format:
         Scoring factors:
         - Number of open ports (more = higher risk)
         - Presence of exposed files (especially .env, .git)
-        - Known Shodan vulnerabilities
+        - Known Censys-discovered vulnerabilities
         - Service types (databases, admin panels = higher risk)
+        - Discovered secrets (GitHub, etc.)
+        - Cloud misconfigurations (public buckets)
+        - Tech stack (outdated versions)
         """
         for asset in assets:
             score = 0.3  # Base score
@@ -173,7 +180,7 @@ Respond with ONLY valid JSON in this exact format:
                 if any(f.path in critical_files for f in asset.exposed_files):
                     score += 0.2
 
-            # Shodan vulnerabilities
+            # Censys vulnerability enrichment
             if asset.shodan_vulns:
                 score += 0.1 * min(len(asset.shodan_vulns), 5)
 
@@ -181,6 +188,22 @@ Respond with ONLY valid JSON in this exact format:
             db_services = {"mysql", "postgresql", "mongodb", "redis", "memcached"}
             if any(s.service.lower() in db_services for s in asset.services):
                 score += 0.15
+
+            # Secrets found (critical - immediate credential exposure)
+            if asset.secrets_found:
+                score += 0.3  # Major boost for leaked secrets
+                # Extra boost for certain secret types
+                critical_secrets = {"aws_access_key_id", "aws_secret_access_key", "private_key"}
+                if any(s.type in critical_secrets for s in asset.secrets_found):
+                    score += 0.2
+
+            # Cloud misconfigurations
+            if asset.cloud_issues:
+                score += 0.15 * min(len(asset.cloud_issues), 3)
+                # Public buckets are critical
+                public_issues = {"s3_bucket_public", "gcs_bucket_public", "azure_blob_public"}
+                if any(i.type in public_issues for i in asset.cloud_issues):
+                    score += 0.2
 
             asset.attack_surface_score = min(1.0, max(0.0, score))
             asset.score_reasoning = "Heuristic scoring (Gemini API unavailable)"

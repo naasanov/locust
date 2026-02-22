@@ -7,7 +7,8 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     GEMINI_API_KEY: str = ""
-    SHODAN_API_KEY: str = ""
+    CENSYS_API_KEY: str = ""
+    GITHUB_TOKEN: str = ""
     MONGODB_URI: str = "mongodb://localhost:27017"
     MONGODB_DB: str = "artaas"
     DROPLET_IP: str = ""

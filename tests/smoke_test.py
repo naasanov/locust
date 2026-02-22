@@ -37,10 +37,11 @@ class TestDependencies:
         import motor.motor_asyncio
         assert motor.motor_asyncio is not None
 
-    def test_shodan_import(self):
-        """Test shodan is installed."""
-        import shodan
-        assert shodan is not None
+    def test_censys_import(self):
+        """Test censys is installed."""
+        assert find_spec("censys") is not None, (
+            "censys is missing. Install with: pip install censys"
+        )
 
     def test_pydantic_import(self):
         """Test pydantic is installed."""
@@ -63,13 +64,13 @@ class TestModuleStructure:
             enumerate_subdomains,
             crawl_endpoints,
             check_exposed_files,
-            shodan_lookup,
+            censys_lookup,
         )
         assert run_nmap is not None
         assert enumerate_subdomains is not None
         assert crawl_endpoints is not None
         assert check_exposed_files is not None
-        assert shodan_lookup is not None
+        assert censys_lookup is not None
 
     def test_models_import(self):
         """Test models are importable."""

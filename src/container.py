@@ -17,7 +17,11 @@ from src.orchestrator import BroadcastFn, Orchestrator
 def build_orchestrator(broadcast: BroadcastFn | None = None) -> Orchestrator:
     settings = get_settings()
     return Orchestrator(
-        recon=ReconAgent(),
+        recon=ReconAgent(
+            gemini_api_key=settings.GEMINI_API_KEY or None,
+            censys_api_key=settings.CENSYS_API_KEY or None,
+            github_token=settings.GITHUB_TOKEN or None,
+        ),
         exploit=ExploitAgent(gemini_api_key=settings.GEMINI_API_KEY or None),
         lateral=LateralAgent(),
         db=get_db(),

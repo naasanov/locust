@@ -18,7 +18,7 @@ dependencies = [
     "pymongo",
     # Recon agent deps
     "python-nmap>=0.7.1",
-    "shodan>=1.31.0",
+    "censys>=2.2.16",
     "pytest>=8.0.0",
     "pytest-asyncio>=0.23.0",
     # Lateral agent deps (optional at runtime — tools.py degrades gracefully without them)
