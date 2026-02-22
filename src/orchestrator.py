@@ -1,9 +1,13 @@
+import logging
+
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from src.agents.protocols import ExploitProtocol, LateralProtocol, ReconProtocol
 from src.db import mongo
 from src.models.finding import LateralAgentInput
 from src.models.scope import ScopeDocument
+
+logger = logging.getLogger(__name__)
 
 
 class Orchestrator:
@@ -31,8 +35,12 @@ class Orchestrator:
             key=lambda a: a.attack_surface_score,
             reverse=True,
         )
-        findings = await self.exploit.run(eligible)
-        await mongo.save_findings(self.db, findings)
+        try:
+            findings = await self.exploit.run(eligible)
+            await mongo.save_findings(self.db, findings)
+        except NotImplementedError:
+            logger.warning("ExploitAgent is not implemented yet; skipping exploit stage.")
+            findings = []
 
         # --- Lateral (only confirmed multi-asset findings + full asset graph) ---
         multi_asset = [
@@ -41,8 +49,11 @@ class Orchestrator:
         if not multi_asset:
             return
 
-        all_assets = await mongo.get_assets(self.db, scope.engagement_id)
-        chains = await self.lateral.run(
-            LateralAgentInput(findings=multi_asset, asset_graph=all_assets)
-        )
-        await mongo.save_attack_chains(self.db, chains)
+        try:
+            all_assets = await mongo.get_assets(self.db, scope.engagement_id)
+            chains = await self.lateral.run(
+                LateralAgentInput(findings=multi_asset, asset_graph=all_assets)
+            )
+            await mongo.save_attack_chains(self.db, chains)
+        except NotImplementedError:
+            logger.warning("LateralAgent is not implemented yet; skipping lateral stage.")
