@@ -5,6 +5,8 @@
 :root {
   --background: #09090b;
   --foreground: #fafafa;
+  --font-geist-sans: "SF Pro Text", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  --font-geist-mono: "SF Mono", Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
 }
 
 @theme inline {
@@ -17,5 +19,5 @@
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-sans);
 }
