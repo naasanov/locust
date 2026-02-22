@@ -2,10 +2,13 @@
 
 import asyncio
 import json
+import logging
 import os
 import re
 
 from src.models.asset import AssetDocument
+
+logger = logging.getLogger(__name__)
 
 
 class GeminiScorer:
@@ -95,16 +98,26 @@ Respond with ONLY valid JSON in this exact format:
             assets_json=json.dumps(assets_payload, indent=2, sort_keys=True)
         )
 
-        loop = asyncio.get_event_loop()
-        response = await loop.run_in_executor(
-            None,
-            lambda: self.client.models.generate_content(
-                model=self.MODEL_NAME,
-                contents=prompt,
-            ),
-        )
-        text = self._extract_response_text(response)
-        parsed = self._parse_scores(text, len(assets))
+        # Try Gemini API, fall back to heuristic scoring on quota errors
+        try:
+            loop = asyncio.get_event_loop()
+            response = await loop.run_in_executor(
+                None,
+                lambda: self.client.models.generate_content(
+                    model=self.MODEL_NAME,
+                    contents=prompt,
+                ),
+            )
+            text = self._extract_response_text(response)
+            parsed = self._parse_scores(text, len(assets))
+        except Exception as e:
+            error_str = str(e)
+            if "429" in error_str or "RESOURCE_EXHAUSTED" in error_str:
+                logger.warning(
+                    "Gemini API quota exhausted, falling back to heuristic scoring"
+                )
+                return self._heuristic_score_assets(assets)
+            raise
 
         for idx, asset in enumerate(assets):
             score_entry = parsed.get(idx)
@@ -122,6 +135,55 @@ Respond with ONLY valid JSON in this exact format:
             asset.score_reasoning = str(
                 score_entry.get("reasoning", "No reasoning provided.")
             )
+
+        return assets
+
+    @staticmethod
+    def _heuristic_score_assets(assets: list[AssetDocument]) -> list[AssetDocument]:
+        """
+        Fallback heuristic scoring when Gemini API is unavailable.
+
+        Scoring factors:
+        - Number of open ports (more = higher risk)
+        - Presence of exposed files (especially .env, .git)
+        - Known Shodan vulnerabilities
+        - Service types (databases, admin panels = higher risk)
+        """
+        for asset in assets:
+            score = 0.3  # Base score
+
+            # Open ports factor
+            port_count = len(asset.open_ports)
+            if port_count > 10:
+                score += 0.2
+            elif port_count > 5:
+                score += 0.1
+            elif port_count > 2:
+                score += 0.05
+
+            # High-risk ports
+            high_risk_ports = {22, 23, 3306, 5432, 6379, 27017, 11211}
+            if any(p in high_risk_ports for p in asset.open_ports):
+                score += 0.15
+
+            # Exposed files factor
+            if asset.exposed_files:
+                score += 0.1 * min(len(asset.exposed_files), 3)
+                critical_files = {"/.env", "/.git/config", "/id_rsa", "/.aws/credentials"}
+                if any(f.path in critical_files for f in asset.exposed_files):
+                    score += 0.2
+
+            # Shodan vulnerabilities
+            if asset.shodan_vulns:
+                score += 0.1 * min(len(asset.shodan_vulns), 5)
+
+            # Database services
+            db_services = {"mysql", "postgresql", "mongodb", "redis", "memcached"}
+            if any(s.service.lower() in db_services for s in asset.services):
+                score += 0.15
+
+            asset.attack_surface_score = min(1.0, max(0.0, score))
+            asset.score_reasoning = "Heuristic scoring (Gemini API unavailable)"
 
         return assets
 

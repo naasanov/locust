@@ -1,0 +1,20 @@
+services:
+  juice-shop:
+    image: bkimminich/juice-shop
+    ports:
+      - "3000:3000"
+
+  mysql:
+    image: mysql:8
+    ports:
+      - "3306:3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpassword
+      MYSQL_DATABASE: juice_db
+      MYSQL_USER: juice_admin
+      MYSQL_PASSWORD: s3cr3tpass!
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-ujuice_admin", "-ps3cr3tpass!"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
