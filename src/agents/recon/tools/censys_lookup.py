@@ -47,16 +47,11 @@ def _service_version(service: dict) -> str | None:
     if not chosen:
         return None
 
-    vendor = chosen.get("vendor")
-    product = chosen.get("product")
     version = chosen.get("version")
     if isinstance(version, str) and version.strip():
         return version.strip()
 
-    version_str = " ".join(
-        p for p in (vendor, product) if isinstance(p, str) and p.strip()
-    ).strip()
-    return version_str or None
+    return None
 
 
 def _service_name_from_software(service: dict) -> str | None:
@@ -143,10 +138,10 @@ def _extract_services(host: dict) -> tuple[list[int], list[ServiceInfo]]:
             continue
 
         service_name = (
-            item.get("extended_service_name")
+            _service_name_from_software(item)
+            or item.get("extended_service_name")
             or item.get("service_name")
             or item.get("service")
-            or _service_name_from_software(item)
             or item.get("protocol")
             or item.get("transport_protocol")
             or "unknown"

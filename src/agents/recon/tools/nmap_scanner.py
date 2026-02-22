@@ -94,11 +94,10 @@ def _run_nmap_sync(
                     open_ports.append(port)
 
                     service_name = port_info.get("name", "unknown")
-                    version = port_info.get("version", "")
-                    product = port_info.get("product", "")
+                    version = port_info.get("version", "").strip()
 
-                    # Combine product and version for better info
-                    version_str = f"{product} {version}".strip() or None
+                    # Only emit the bare version number, not product name
+                    version_str = version or None
 
                     services.append(ServiceInfo(
                         port=port,
