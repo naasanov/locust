@@ -43,6 +43,19 @@ function scoreColor(score: number): string {
   return "text-emerald-300";
 }
 
+function normalizeApiBase(value: string): string {
+  let parsed: URL;
+  try {
+    parsed = new URL(value.trim());
+  } catch {
+    throw new Error("API Base must be a valid URL.");
+  }
+  if (!["http:", "https:"].includes(parsed.protocol)) {
+    throw new Error("API Base must start with http:// or https://");
+  }
+  return `${parsed.origin}${parsed.pathname}`.replace(/\/$/, "");
+}
+
 export default function Home() {
   const [engagementId, setEngagementId] = useState(DEFAULT_ENGAGEMENT_ID);
   const [apiBase, setApiBase] = useState(DEFAULT_API_BASE);
@@ -67,7 +80,8 @@ export default function Home() {
     setError(null);
 
     try {
-      const endpoint = `${apiBase.replace(/\/$/, "")}/api/assets?engagement_id=${encodeURIComponent(engagementId.trim())}&min_score=${minScore.toFixed(2)}`;
+      const validApiBase = normalizeApiBase(apiBase);
+      const endpoint = `${validApiBase}/api/assets?engagement_id=${encodeURIComponent(engagementId.trim())}&min_score=${minScore.toFixed(2)}`;
       const response = await fetch(endpoint);
       if (!response.ok) {
         throw new Error(`Request failed with status ${response.status}`);

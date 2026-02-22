@@ -40,13 +40,21 @@ curl -X POST http://localhost:8000/api/recon/run \
   }'
 ```
 
-### 3. Verify assets in DB/API
+This endpoint is asynchronous and returns a `run_id` immediately.
+
+### 3. Poll recon run status
+
+```bash
+curl "http://localhost:8000/api/recon/run/<run_id>"
+```
+
+### 4. Verify assets in DB/API
 
 ```bash
 curl "http://localhost:8000/api/assets?engagement_id=abc123&min_score=0.0"
 ```
 
-### 4. Run dashboard
+### 5. Run dashboard
 
 ```bash
 cd frontend

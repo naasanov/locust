@@ -49,11 +49,13 @@ class Orchestrator:
         if not multi_asset:
             return
 
+        all_assets = await mongo.get_assets(self.db, scope.engagement_id)
         try:
-            all_assets = await mongo.get_assets(self.db, scope.engagement_id)
             chains = await self.lateral.run(
                 LateralAgentInput(findings=multi_asset, asset_graph=all_assets)
             )
-            await mongo.save_attack_chains(self.db, chains)
         except NotImplementedError:
             logger.warning("LateralAgent is not implemented yet; skipping lateral stage.")
+            return
+
+        await mongo.save_attack_chains(self.db, chains)
