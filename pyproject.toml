@@ -24,6 +24,9 @@ dependencies = [
     # Lateral agent deps (optional at runtime — tools.py degrades gracefully without them)
     "boto3>=1.34.0",
     "pymysql>=1.1.0",
+    # Solana on-chain anchoring (optional — degrades gracefully if absent)
+    "solana>=0.34.0",
+    "solders>=0.21.0",
 ]
 
 [tool.pytest.ini_options]

@@ -1,3 +1,5 @@
+@import "tailwindcss";
+
 @font-face {
   font-family: 'Oxanium';
   src: url('/fonts/Oxanium-VariableFont_wght.ttf') format('truetype');
@@ -21,8 +23,6 @@
   font-style: normal;
   font-display: swap;
 }
-
-@import "tailwindcss";
 
 @variant dark (&:where(.dark, .dark *));
 
