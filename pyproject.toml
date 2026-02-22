@@ -3,7 +3,7 @@ requires = ["setuptools>=61"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "src"
+name = "uncp"
 version = "0.1.0"
 requires-python = ">=3.12"
 dependencies = [
@@ -15,7 +15,20 @@ dependencies = [
     "google-generativeai",
     "httpx",
     "python-dotenv",
+    # Recon agent deps
+    "python-nmap>=0.7.1",
+    "shodan>=1.31.0",
 ]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
 
 [tool.setuptools.packages.find]
 where = ["."]

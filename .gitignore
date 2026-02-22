@@ -32,10 +32,12 @@ __pycache__/
 *.py[cod]
 *.pyo
 *.pyd
+*.egg-info/
 *.egg-info
 dist/
 build/
 *.egg
+.pytest_cache/
 
 # Logs
 *.log
