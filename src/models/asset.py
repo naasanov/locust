@@ -1,3 +1,4 @@
+import uuid
 from datetime import datetime, timezone
 from typing import Literal
 
@@ -31,6 +32,7 @@ class CloudIssue(BaseModel):
 
 
 class AssetDocument(BaseModel):
+    asset_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     engagement_id: str
     asset_type: AssetType
     ip: str | None = None
