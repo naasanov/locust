@@ -63,6 +63,12 @@ export interface AttackChain {
   discovered_at: string;
 }
 
+export interface ServiceInfo {
+  port: number;
+  service: string;
+  version: string | null;
+}
+
 export interface Asset {
   asset_id: string;
   engagement_id: string;
@@ -70,6 +76,9 @@ export interface Asset {
   ip: string | null;
   url: string | null;
   open_ports: number[];
+  services: ServiceInfo[];
+  tech_stack: string[];
+  endpoints: string[];
   attack_surface_score: number;
   score_reasoning: string | null;
 }
