@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Search, Plus, X, Shield, Loader2, AlertTriangle, Bug, Server, Globe, Cloud } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -11,11 +11,29 @@ import Image from 'next/image';
 
 type Stage = 'search' | 'form' | 'loading' | 'results';
 
+const LOCUST_COUNT = 22;
+const SWARM = Array.from({ length: LOCUST_COUNT }, (_, i) => ({
+  id: i,
+  yPct: 5 + Math.random() * 85,
+  delay: Math.pow(Math.random(), 0.5) * 3,
+  duration: 1.8 + Math.random() * 2,
+  scale: 0.85 + Math.random() * 0.7,
+  flipY: Math.random() > 0.5,
+}));
+
 const FORBIDDEN_ACTION_OPTIONS = [
   'destructive_payloads',
   'dos_testing',
   'social_engineering',
   'physical_access',
+];
+
+const TYPEWRITER_PHRASES = [
+  'Target Acquisition',
+  'Release the Swarm',
+  'Initialize Recon',
+  'Breach Protocol',
+  'Unleash the Horde',
 ];
 
 const LOADING_PHASES = [
@@ -385,6 +403,32 @@ export default function Home() {
   const [forbiddenActions, setForbiddenActions] = useState<string[]>([]);
   const [loadingPhase, setLoadingPhase] = useState(0);
   const [vulnerabilities, setVulnerabilities] = useState<Finding[]>([]);
+  const [showSwarm, setShowSwarm] = useState(false);
+
+  const [twText, setTwText] = useState('');
+  const [twPhrase, setTwPhrase] = useState(0);
+  const [twPhase, setTwPhase] = useState<'typing' | 'pausing' | 'deleting'>('typing');
+
+  useEffect(() => {
+    const current = TYPEWRITER_PHRASES[twPhrase];
+    if (twPhase === 'typing') {
+      if (twText.length < current.length) {
+        const t = setTimeout(() => setTwText(current.slice(0, twText.length + 1)), 75);
+        return () => clearTimeout(t);
+      } else {
+        const t = setTimeout(() => setTwPhase('deleting'), 2000);
+        return () => clearTimeout(t);
+      }
+    } else {
+      if (twText.length > 0) {
+        const t = setTimeout(() => setTwText(twText.slice(0, -1)), 40);
+        return () => clearTimeout(t);
+      } else {
+        setTwPhrase((p) => (p + 1) % TYPEWRITER_PHRASES.length);
+        setTwPhase('typing');
+      }
+    }
+  }, [twText, twPhrase, twPhase]);
 
   const handleUrlSubmit = () => {
     if (!url.trim()) return;
@@ -392,6 +436,8 @@ export default function Home() {
   };
 
   const handleRun = () => {
+    setShowSwarm(true);
+    setTimeout(() => setShowSwarm(false), 8000);
     setStage('loading');
     setLoadingPhase(0);
     let phase = 0;
@@ -427,18 +473,18 @@ export default function Home() {
   };
 
   return (
-    <div className="min-h-screen bg-background flex flex-col">
+    <div className="min-h-screen bg-transparent flex flex-col">
       {/* Header */}
       <header className="p-6 flex items-center justify-between">
         <div className="flex items-center gap-4">
           <Image
-            src="/locust.png"
+            src="/locust_right.png"
             alt="Locust"
             width={48}
             height={48}
             className="w-12 h-12"
           />
-          <span className="font-mono font-bold text-3xl tracking-[0.3em] text-foreground uppercase">
+          <span className="font-display font-semibold text-2xl tracking-[0.35em] text-foreground uppercase">
             LOCUST
           </span>
         </div>
@@ -466,20 +512,25 @@ export default function Home() {
               exit={{ opacity: 0, y: -60 }}
               transition={{ duration: 0.4, ease: 'easeOut' }}
             >
-              <motion.div className="mb-12 text-center">
-                <h1 className="font-mono text-4xl font-bold text-foreground tracking-tight mb-4">
-                  Target Acquisition
-                </h1>
-                <p className="text-muted-foreground text-base">Enter the primary target URL to begin</p>
+              <motion.div className="mb-6 text-center">
+                <div className="inline-block text-left">
+                  <h1 className="font-display font-semibold text-6xl text-foreground tracking-wide whitespace-nowrap">
+                    {twText}
+                    <span className="cursor-blink text-primary ml-0.5">|</span>
+                  </h1>
+                  <div className='w-64' />
+
+                </div>
               </motion.div>
+              <p className="font-sans text-muted-foreground text-base font-normal mb-12">Enter the primary target URL to begin</p>
               <div className="w-full relative group">
-                <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground group-focus-within:text-primary transition-colors" />
+                <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
                 <Input
                   value={url}
                   onChange={(e) => setUrl(e.target.value)}
                   onKeyDown={(e) => e.key === 'Enter' && handleUrlSubmit()}
                   placeholder="Insert URL..."
-                  className="w-full h-14 pl-12 pr-4 bg-card border-border text-foreground text-lg font-mono placeholder:text-muted-foreground rounded-xl focus-visible:ring-primary"
+                  className="w-full h-14 pl-12 pr-4 bg-card/50 border-border text-foreground text-lg font-mono placeholder:text-muted-foreground focus:placeholder:opacity-0 rounded-full focus-visible:ring-0 focus-visible:ring-offset-0"
                 />
               </div>
             </motion.div>
@@ -496,7 +547,7 @@ export default function Home() {
             >
               {/* URL bar at top */}
               <motion.div
-                className="relative group mb-8"
+                className="relative group mb-8 rounded-full"
                 initial={{ y: 200 }}
                 animate={{ y: 0 }}
                 transition={{ duration: 0.5, ease: 'easeOut' }}
@@ -505,18 +556,18 @@ export default function Home() {
                 <Input
                   value={url}
                   onChange={(e) => setUrl(e.target.value)}
-                  className="w-full h-12 pl-12 pr-4 bg-card border-primary/30 text-foreground font-mono rounded-xl"
+                  className="w-full h-12 pl-12 pr-4 bg-card/50 border-primary/30 text-foreground font-mono rounded-full focus-visible:ring-0 focus-visible:ring-offset-0"
                 />
               </motion.div>
 
               {/* Form fields */}
               <motion.div
-                className="bg-card border border-border rounded-xl p-8 space-y-8"
+                className="bg-card/50 border border-border rounded-xl p-8 space-y-8"
                 initial={{ opacity: 0, y: 30 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: 0.2, duration: 0.4 }}
               >
-                <h2 className="font-mono text-sm uppercase tracking-widest text-muted-foreground border-b border-border pb-3">
+                <h2 className="font-display font-medium text-xs uppercase tracking-[0.2em] text-muted-foreground border-b border-border pb-3">
                   Scope Configuration
                 </h2>
 
@@ -548,7 +599,7 @@ export default function Home() {
                 />
 
                 <div className="border-t border-border pt-8 space-y-8">
-                  <h2 className="font-mono text-sm uppercase tracking-widest text-destructive/80">
+                  <h2 className="font-display font-medium text-xs uppercase tracking-[0.2em] text-destructive/80">
                     Exclusions
                   </h2>
 
@@ -570,11 +621,10 @@ export default function Home() {
                         <button
                           key={action}
                           onClick={() => toggleForbiddenAction(action)}
-                          className={`px-3 py-1.5 rounded-lg font-mono text-xs border transition-all ${
-                            forbiddenActions.includes(action)
-                              ? 'bg-destructive/20 text-destructive border-destructive/30'
-                              : 'bg-secondary text-secondary-foreground border-border hover:border-muted-foreground'
-                          }`}
+                          className={`px-3 py-1.5 rounded-lg font-mono text-xs border transition-all ${forbiddenActions.includes(action)
+                            ? 'bg-destructive/20 text-destructive border-destructive/30'
+                            : 'bg-secondary text-secondary-foreground border-border hover:border-muted-foreground'
+                            }`}
                         >
                           {action}
                         </button>
@@ -627,13 +677,12 @@ export default function Home() {
                     return (
                       <motion.div
                         key={phase.label}
-                        className={`flex items-center gap-3 font-mono text-sm transition-all duration-300 ${
-                          i < loadingPhase
-                            ? 'text-primary'
-                            : i === loadingPhase
+                        className={`flex items-center gap-3 font-mono text-sm transition-all duration-300 ${i < loadingPhase
+                          ? 'text-primary'
+                          : i === loadingPhase
                             ? 'text-foreground'
                             : 'text-muted-foreground/40'
-                        }`}
+                          }`}
                         initial={{ opacity: 0, x: -10 }}
                         animate={{ opacity: 1, x: 0 }}
                         transition={{ delay: i * 0.1 }}
@@ -688,10 +737,10 @@ export default function Home() {
                 transition={{ delay: 0.2, duration: 0.4 }}
               >
                 <div className="px-6 py-4 border-b border-border">
-                  <h2 className="font-mono text-lg font-bold text-foreground uppercase tracking-wider">
+                  <h2 className="font-display font-semibold text-xl text-foreground uppercase tracking-wide">
                     Vulnerability Report
                   </h2>
-                  <p className="text-muted-foreground text-sm mt-1">
+                  <p className="font-sans text-muted-foreground text-sm font-normal mt-1">
                     {vulnerabilities.length} findings detected
                   </p>
                 </div>
@@ -768,6 +817,41 @@ export default function Home() {
           )}
         </AnimatePresence>
       </main>
+
+      {/* Locust swarm overlay */}
+      <AnimatePresence>
+        {showSwarm && (
+          <div className="fixed inset-0 pointer-events-none z-50 overflow-hidden">
+            {SWARM.map((locust) => (
+              <motion.div
+                key={locust.id}
+                className="absolute"
+                style={{ top: `${locust.yPct}%` }}
+                initial={{ x: '-80px' }}
+                animate={{
+                  x: 'calc(100vw + 80px)',
+                  y: [0, -8, 0, 8, 0],
+                }}
+                transition={{
+                  x: { duration: locust.duration, delay: locust.delay, ease: 'linear' },
+                  y: { duration: 1.2, repeat: Infinity, ease: 'easeInOut', repeatType: 'mirror' },
+                }}
+              >
+                <Image
+                  src="/locust_right.png"
+                  alt=""
+                  width={80}
+                  height={80}
+                  style={{
+                    transform: `scale(${locust.scale})`,
+                    imageRendering: 'pixelated',
+                  }}
+                />
+              </motion.div>
+            ))}
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
