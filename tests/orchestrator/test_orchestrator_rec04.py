@@ -37,7 +37,7 @@ def build_scope() -> ScopeDocument:
 
 
 @pytest.mark.asyncio
-async def test_orchestrator_rec04_skips_unimplemented_agents(monkeypatch):
+async def test_orchestrator_rec04_seeds_and_runs_lateral_when_exploit_unimplemented(monkeypatch):
     events: list[str] = []
 
     class FakeRecon:
@@ -62,7 +62,7 @@ async def test_orchestrator_rec04_skips_unimplemented_agents(monkeypatch):
     class FakeLateral:
         async def run(self, input):
             events.append("lateral")
-            raise AssertionError("lateral stage should not run in this test")
+            return []
 
     async def fake_save_assets(db, assets):
         events.append("save_assets")
@@ -70,8 +70,17 @@ async def test_orchestrator_rec04_skips_unimplemented_agents(monkeypatch):
     async def fake_save_findings(db, findings):
         events.append("save_findings")
 
+    async def fake_get_assets(db, engagement_id):
+        events.append("get_assets")
+        return []
+
+    async def fake_save_attack_chains(db, chains):
+        events.append("save_attack_chains")
+
     monkeypatch.setattr("src.orchestrator.mongo.save_assets", fake_save_assets)
     monkeypatch.setattr("src.orchestrator.mongo.save_findings", fake_save_findings)
+    monkeypatch.setattr("src.orchestrator.mongo.get_assets", fake_get_assets)
+    monkeypatch.setattr("src.orchestrator.mongo.save_attack_chains", fake_save_attack_chains)
 
     orchestrator = Orchestrator(
         recon=FakeRecon(),
@@ -81,7 +90,7 @@ async def test_orchestrator_rec04_skips_unimplemented_agents(monkeypatch):
     )
     await orchestrator.run_cycle(build_scope())
 
-    assert events == ["recon", "save_assets", "exploit"]
+    assert events == ["recon", "save_assets", "exploit", "save_findings", "get_assets", "lateral", "save_attack_chains"]
 
 
 @pytest.mark.asyncio

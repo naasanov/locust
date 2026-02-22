@@ -4,6 +4,14 @@ services:
     ports:
       - "3000:3000"
 
+  demo-vuln:
+    image: python:3.12-alpine
+    command: ["sh", "-c", "cd /srv && python -m http.server 8000"]
+    volumes:
+      - ./tests/fixtures/demo-vuln:/srv:ro
+    ports:
+      - "8000:8000"
+
   mysql:
     image: mysql:8
     ports:

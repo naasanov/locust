@@ -1,10 +1,23 @@
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+import asyncio
+import json
+import logging
+import os
+from urllib.parse import urlparse
+
+from dotenv import load_dotenv
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pymongo import MongoClient
-from dotenv import load_dotenv
-import os, asyncio, json
+
+from src.config import get_settings
+from src.container import build_orchestrator
+from src.db.mongo import close_db
+from src.models.scope import (
+    ScopeDocument,
+)
 
 load_dotenv()
+logger = logging.getLogger(__name__)
 
 app = FastAPI()
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
@@ -13,6 +26,15 @@ client = MongoClient(os.getenv("MONGODB_URI"))
 db = client[os.getenv("MONGODB_DB", "artaas")]
 
 connected_clients: list[WebSocket] = []
+
+
+def _get_orch_lock() -> asyncio.Lock:
+    lock = getattr(app.state, "orch_run_lock", None)
+    if lock is None:
+        lock = asyncio.Lock()
+        app.state.orch_run_lock = lock
+    return lock
+
 
 @app.get("/api/health")
 def health():
@@ -41,6 +63,46 @@ def get_status():
         "chains": db.attack_chains.count_documents({})
     }
 
+
+@app.post("/api/orchestrator/run-once")
+async def run_orchestrator_once(scope: ScopeDocument):
+    lock = _get_orch_lock()
+    logger.info(
+        "run-once requested: engagement_id=%s domains=%s ip_ranges=%s lock_locked=%s",
+        scope.engagement_id,
+        scope.targets.domains,
+        scope.targets.ip_ranges,
+        lock.locked(),
+    )
+    if lock.locked():
+        logger.warning(
+            "run-once rejected: orchestrator busy for engagement_id=%s",
+            scope.engagement_id,
+        )
+        raise HTTPException(
+            status_code=409,
+            detail="An orchestrator cycle is already in progress",
+        )
+
+    orchestrator = build_orchestrator(broadcast=broadcast)
+    start = asyncio.get_event_loop().time()
+    try:
+        logger.info("run-once starting orchestrator cycle: engagement_id=%s", scope.engagement_id)
+        async with lock:
+            await orchestrator.run_cycle(scope)
+        elapsed = asyncio.get_event_loop().time() - start
+        logger.info(
+            "run-once completed orchestrator cycle: engagement_id=%s elapsed_s=%.2f",
+            scope.engagement_id,
+            elapsed,
+        )
+    except Exception as exc:
+        logger.exception("Manual orchestrator run failed for %s", scope.engagement_id)
+        raise HTTPException(status_code=500, detail=f"orchestrator run failed: {exc}") from exc
+
+    return {"status": "ok", "engagement_id": scope.engagement_id}
+
+
 @app.websocket("/ws/live")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
@@ -58,3 +120,23 @@ async def broadcast(message: dict):
             await client.send_text(json.dumps(message))
         except:
             connected_clients.remove(client)
+
+
+@app.on_event("startup")
+async def startup() -> None:
+    settings = get_settings()
+    level = getattr(logging, settings.LOG_LEVEL.upper(), logging.INFO)
+    root_logger = logging.getLogger()
+    root_logger.setLevel(level)
+    logging.getLogger("src").setLevel(level)
+    logging.getLogger("src.agents").setLevel(level)
+    logging.getLogger("src.agents.recon").setLevel(level)
+    logging.getLogger("src.agents.exploit").setLevel(level)
+    logging.getLogger("src.agents.lateral").setLevel(level)
+    logger.info("Configured root/src logger level to %s", settings.LOG_LEVEL.upper())
+    logger.info("Orchestrator background loop disabled; use /api/orchestrator/run-once")
+
+
+@app.on_event("shutdown")
+async def shutdown() -> None:
+    await close_db()

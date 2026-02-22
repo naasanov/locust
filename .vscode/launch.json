@@ -1,6 +1,36 @@
 {
   "version": "0.2.0",
+  "compounds": [
+    {
+      "name": "full stack: frontend + backend",
+      "configurations": ["backend: uvicorn orchestrator", "frontend: dev"],
+      "stopAll": true
+    }
+  ],
   "configurations": [
+    {
+      "name": "backend: uvicorn orchestrator",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "uvicorn",
+      "args": ["server.main:app", "--reload", "--port", "8765", "--host", "127.0.0.1", "--log-level", "info"],
+      "cwd": "${workspaceFolder}",
+      "envFile": "${workspaceFolder}/.env",
+      "env": {
+        "ORCHESTRATOR_ENABLED": "true",
+        "ORCHESTRATOR_INTERVAL_SECONDS": "300",
+        "ORCHESTRATOR_STARTUP_DELAY_SECONDS": "2",
+        "ENGAGEMENT_ID": "vscode-local-engagement",
+        "TARGET_URL": "",
+        "TARGET_IP": "127.0.0.1",
+        "LOG_LEVEL": "INFO",
+        "NUCLEI_TAGS": "exposure,misconfig,api,headers",
+        "NUCLEI_SEVERITY": "info,low,medium,high,critical",
+        "NUCLEI_PROCESS_TIMEOUT_S": "300"
+      },
+      "justMyCode": true,
+      "console": "integratedTerminal"
+    },
     {
       "name": "frontend: dev",
       "type": "node",

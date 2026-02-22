@@ -121,12 +121,15 @@ class TestAssetEligibility:
         exploit.run = AsyncMock(return_value=[])
 
         lateral = AsyncMock()
+        lateral.run = AsyncMock(return_value=[])
 
         orch = _build_orchestrator(recon, exploit, lateral)
 
         with patch("src.orchestrator.mongo.save_assets", AsyncMock()):
             with patch("src.orchestrator.mongo.save_findings", AsyncMock()):
-                await orch.run_cycle(_scope())
+                with patch("src.orchestrator.mongo.get_assets", AsyncMock(return_value=[])):
+                    with patch("src.orchestrator.mongo.save_attack_chains", AsyncMock()):
+                        await orch.run_cycle(_scope())
 
         call_args = exploit.run.call_args[0][0]
         scores = [a.attack_surface_score for a in call_args]
@@ -145,11 +148,15 @@ class TestAssetEligibility:
         exploit = AsyncMock()
         exploit.run = AsyncMock(return_value=[])
 
-        orch = _build_orchestrator(recon, exploit, AsyncMock())
+        lateral = AsyncMock()
+        lateral.run = AsyncMock(return_value=[])
+        orch = _build_orchestrator(recon, exploit, lateral)
 
         with patch("src.orchestrator.mongo.save_assets", AsyncMock()):
             with patch("src.orchestrator.mongo.save_findings", AsyncMock()):
-                await orch.run_cycle(_scope())
+                with patch("src.orchestrator.mongo.get_assets", AsyncMock(return_value=[])):
+                    with patch("src.orchestrator.mongo.save_attack_chains", AsyncMock()):
+                        await orch.run_cycle(_scope())
 
         passed = exploit.run.call_args[0][0]
         scores = [a.attack_surface_score for a in passed]
@@ -229,8 +236,8 @@ class TestFindingsToLateral:
         assert lateral_input.findings[0].finding_id == multi.finding_id
 
     @pytest.mark.asyncio
-    async def test_lateral_not_called_when_no_multi_asset_findings(self):
-        """Lateral agent is skipped when there are no multi-asset confirmed findings."""
+    async def test_lateral_called_with_seed_when_no_multi_asset_findings(self):
+        """When no multi-asset findings exist, orchestrator injects demo seed and runs lateral."""
         findings = [
             _finding(exploitable=True, blast_radius="single_asset"),
             _finding(exploitable=False, blast_radius="multi_asset"),
@@ -248,11 +255,21 @@ class TestFindingsToLateral:
 
         orch = _build_orchestrator(recon, exploit, lateral)
 
+        save_findings_mock = AsyncMock()
         with patch("src.orchestrator.mongo.save_assets", AsyncMock()):
-            with patch("src.orchestrator.mongo.save_findings", AsyncMock()):
-                await orch.run_cycle(_scope())
+            with patch("src.orchestrator.mongo.save_findings", save_findings_mock):
+                with patch("src.orchestrator.mongo.get_assets", AsyncMock(return_value=[_asset(0.8)])):
+                    with patch("src.orchestrator.mongo.save_attack_chains", AsyncMock()):
+                        await orch.run_cycle(_scope())
 
-        lateral.run.assert_not_called()
+        lateral.run.assert_called_once()
+        lateral_input = lateral.run.call_args[0][0]
+        assert len(lateral_input.findings) == 1
+        assert lateral_input.findings[0].vulnerability_class == "credential_exposure"
+        assert lateral_input.findings[0].blast_radius == "multi_asset"
+        assert lateral_input.findings[0].exploitable is True
+        # One save for exploit findings + one save for seeded finding.
+        assert save_findings_mock.call_count == 2
 
     @pytest.mark.asyncio
     async def test_lateral_receives_full_asset_graph(self):
@@ -284,6 +301,47 @@ class TestFindingsToLateral:
 
         lateral_input = lateral.run.call_args[0][0]
         assert len(lateral_input.asset_graph) == 3
+
+    @pytest.mark.asyncio
+    async def test_demo_seed_on_miss_forces_lateral(self, monkeypatch):
+        """Inject seed finding and run lateral when no real multi-asset findings exist."""
+        monkeypatch.setenv("ORCHESTRATOR_DEMO_SEED_URL", "http://127.0.0.1:8000/.env")
+
+        findings = [
+            _finding(exploitable=True, blast_radius="single_asset"),
+            _finding(exploitable=False, blast_radius="multi_asset"),
+        ]
+
+        recon = AsyncMock()
+        recon.run = AsyncMock(return_value=[_asset(0.8)])
+        recon.persists_assets = False
+
+        exploit = AsyncMock()
+        exploit.run = AsyncMock(return_value=findings)
+
+        lateral = AsyncMock()
+        lateral.run = AsyncMock(return_value=[])
+
+        orch = _build_orchestrator(recon, exploit, lateral)
+
+        save_findings_mock = AsyncMock()
+        with patch("src.orchestrator.mongo.save_assets", AsyncMock()):
+            with patch("src.orchestrator.mongo.save_findings", save_findings_mock):
+                with patch("src.orchestrator.mongo.get_assets", AsyncMock(return_value=[_asset(0.8)])):
+                    with patch("src.orchestrator.mongo.save_attack_chains", AsyncMock()):
+                        await orch.run_cycle(_scope())
+
+        lateral.run.assert_called_once()
+        lateral_input = lateral.run.call_args[0][0]
+        assert len(lateral_input.findings) == 1
+        seeded = lateral_input.findings[0]
+        assert seeded.vulnerability_class == "credential_exposure"
+        assert seeded.blast_radius == "multi_asset"
+        assert seeded.exploitable is True
+        assert seeded.affected_url == "http://127.0.0.1:8000/.env"
+        # Original findings + one seeded finding are persisted
+        saved = save_findings_mock.call_args_list[-1][0][1]
+        assert len(saved) == 1
 
 
 # ---------------------------------------------------------------------------

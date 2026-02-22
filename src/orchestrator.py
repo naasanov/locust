@@ -1,11 +1,13 @@
 import logging
+import os
+import uuid
 from collections.abc import Awaitable, Callable
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from src.agents.protocols import ExploitProtocol, LateralProtocol, ReconProtocol
 from src.db import mongo
-from src.models.finding import LateralAgentInput
+from src.models.finding import Evidence, FindingDocument, LateralAgentInput
 from src.models.scope import ScopeDocument
 
 logger = logging.getLogger(__name__)
@@ -71,6 +73,23 @@ class Orchestrator:
             f for f in findings if f.exploitable and f.blast_radius == "multi_asset"
         ]
         if not multi_asset:
+            seeded = self._build_demo_seed_finding(scope, findings, assets)
+            if seeded is not None:
+                findings.append(seeded)
+                await mongo.save_findings(self.db, [seeded])
+                multi_asset = [seeded]
+                await self._emit({
+                    "event": "demo_seeded",
+                    "engagement_id": scope.engagement_id,
+                    "finding_id": seeded.finding_id,
+                    "affected_url": seeded.affected_url,
+                })
+                logger.warning(
+                    "Demo seed injected for engagement %s (finding_id=%s)",
+                    scope.engagement_id,
+                    seeded.finding_id,
+                )
+        if not multi_asset:
             await self._emit({
                 "event": "cycle_complete",
                 "engagement_id": scope.engagement_id,
@@ -99,3 +118,46 @@ class Orchestrator:
             "chain_count": len(chains),
         })
         await self._emit({"event": "cycle_complete", "engagement_id": scope.engagement_id})
+
+    @staticmethod
+    def _build_demo_seed_finding(
+        scope: ScopeDocument,
+        findings: list[FindingDocument],
+        assets,
+    ) -> FindingDocument | None:
+        seed_url = os.getenv("ORCHESTRATOR_DEMO_SEED_URL", "http://127.0.0.1:8000/.env")
+        snippet = os.getenv(
+            "ORCHESTRATOR_DEMO_SEED_SNIPPET",
+            "DB_HOST=localhost\nDB_USER=juice_admin\nDB_PASSWORD=s3cr3tpass!\nNODE_ENV=production\n",
+        )
+        parsed_status = os.getenv("ORCHESTRATOR_DEMO_SEED_STATUS", "200")
+        try:
+            status_code = int(parsed_status)
+        except ValueError:
+            status_code = 200
+
+        asset_id = ""
+        if assets:
+            asset_id = getattr(assets[0], "asset_id", "") or ""
+        if not asset_id and findings:
+            asset_id = findings[0].asset_id
+        if not asset_id:
+            return None
+
+        return FindingDocument(
+            engagement_id=scope.engagement_id,
+            asset_id=asset_id,
+            finding_id=f"demo-seed-{uuid.uuid4()}",
+            vulnerability_class="credential_exposure",
+            title="Demo Seed: Exposed .env file with DB credentials",
+            severity="critical",
+            exploitable=True,
+            affected_url=seed_url,
+            evidence=Evidence(
+                request="GET /.env HTTP/1.1\nHost: 127.0.0.1:8000",
+                response_snippet=snippet,
+                status_code=status_code,
+            ),
+            blast_radius="multi_asset",
+            gemini_reasoning="[demo-seed] Injected by orchestrator fallback",
+        )
