@@ -67,7 +67,7 @@ def get_status():
 @app.post("/api/orchestrator/run-once")
 async def run_orchestrator_once(scope: ScopeDocument):
     lock = _get_orch_lock()
-    logger.info(
+    logger.warning(
         "run-once requested: engagement_id=%s domains=%s ip_ranges=%s lock_locked=%s",
         scope.engagement_id,
         scope.targets.domains,
@@ -85,17 +85,32 @@ async def run_orchestrator_once(scope: ScopeDocument):
         )
 
     orchestrator = build_orchestrator(broadcast=broadcast)
+    timeout_seconds = int(os.getenv("ORCHESTRATOR_RUN_ONCE_TIMEOUT_SECONDS", "900"))
     start = asyncio.get_event_loop().time()
     try:
-        logger.info("run-once starting orchestrator cycle: engagement_id=%s", scope.engagement_id)
+        logger.warning(
+            "run-once starting orchestrator cycle: engagement_id=%s timeout_s=%s",
+            scope.engagement_id,
+            timeout_seconds,
+        )
         async with lock:
-            await orchestrator.run_cycle(scope)
+            await asyncio.wait_for(orchestrator.run_cycle(scope), timeout=timeout_seconds)
         elapsed = asyncio.get_event_loop().time() - start
-        logger.info(
+        logger.warning(
             "run-once completed orchestrator cycle: engagement_id=%s elapsed_s=%.2f",
             scope.engagement_id,
             elapsed,
         )
+    except asyncio.TimeoutError as exc:
+        logger.exception(
+            "Manual orchestrator run timed out for %s after %ss",
+            scope.engagement_id,
+            timeout_seconds,
+        )
+        raise HTTPException(
+            status_code=504,
+            detail=f"orchestrator run timed out after {timeout_seconds}s",
+        ) from exc
     except Exception as exc:
         logger.exception("Manual orchestrator run failed for %s", scope.engagement_id)
         raise HTTPException(status_code=500, detail=f"orchestrator run failed: {exc}") from exc
