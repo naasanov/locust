@@ -11,14 +11,15 @@ from src.agents.lateral import LateralAgent
 from src.agents.recon import ReconAgent
 from src.config import get_settings
 from src.db.mongo import get_db
-from src.orchestrator import Orchestrator
+from src.orchestrator import BroadcastFn, Orchestrator
 
 
-def build_orchestrator() -> Orchestrator:
+def build_orchestrator(broadcast: BroadcastFn | None = None) -> Orchestrator:
     settings = get_settings()
     return Orchestrator(
         recon=ReconAgent(),
         exploit=ExploitAgent(gemini_api_key=settings.GEMINI_API_KEY or None),
         lateral=LateralAgent(),
         db=get_db(),
+        broadcast=broadcast,
     )
