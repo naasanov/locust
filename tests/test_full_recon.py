@@ -13,6 +13,7 @@ Run with: pytest tests/test_full_recon.py -v -s
 """
 
 import asyncio
+import pytest
 import json
 import logging
 import os
@@ -117,6 +118,7 @@ async def run_full_recon_test(target_domain: str = "example.com", target_ip: str
         raise
 
 
+@pytest.mark.asyncio
 async def test_individual_tools():
     """Test each tool individually."""
     from src.config import get_settings
@@ -199,6 +201,7 @@ async def test_individual_tools():
     print("=" * 60)
 
 
+@pytest.mark.asyncio
 async def test_gemini_scoring():
     """Test the Gemini scoring component."""
     from src.config import get_settings
