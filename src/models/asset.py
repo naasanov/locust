@@ -1,3 +1,4 @@
+import uuid
 from datetime import datetime, timezone
 from typing import Literal
 
@@ -31,6 +32,7 @@ class CloudIssue(BaseModel):
 
 
 class AssetDocument(BaseModel):
+    asset_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     engagement_id: str
     asset_type: AssetType
     ip: str | None = None
@@ -42,6 +44,6 @@ class AssetDocument(BaseModel):
     shodan_vulns: list[str] = []
     secrets_found: list[SecretFound] = []
     cloud_issues: list[CloudIssue] = []
-    attack_surface_score: float = Field(0.0, ge=0.0, le=1.0)
+    attack_surface_score: float = Field(default=0.0, ge=0.0, le=1.0)
     score_reasoning: str | None = None
     discovered_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
