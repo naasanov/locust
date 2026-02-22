@@ -112,13 +112,15 @@ class ReconAgent:
         domains = self._normalized_domains(scope)
         nmap_targets = self._nmap_targets(scope, domains)
 
-        # 1) nmap
+        # 1) nmap - scan common ports including web ports above 1000
+        nmap_ports = "1-1000,3000,3306,5000,5432,8000,8080,8443,27017"
         for target in nmap_targets:
             if self._is_forbidden_host(scope, target):
                 continue
             asset = await run_nmap(
                 target=target,
                 engagement_id=scope.engagement_id,
+                ports=nmap_ports,
             )
             if asset is not None:
                 self._merge_asset(assets_by_key, asset)
@@ -149,6 +151,13 @@ class ReconAgent:
                 url=url,
             )
             web_asset.endpoints = sorted(set(web_asset.endpoints) | set(endpoints))
+
+            # Update IP-based asset with URL if this URL points to a known IP
+            parsed = urlparse(url)
+            ip_key = f"ip:{parsed.hostname}"
+            if ip_key in assets_by_key and assets_by_key[ip_key].url is None:
+                assets_by_key[ip_key].url = url
+                assets_by_key[ip_key].asset_type = "web_app"
 
         # 4) exposed files
         for url in self._web_urls(assets_by_key):
@@ -266,8 +275,20 @@ class ReconAgent:
 
     @staticmethod
     def _crawl_urls(domains: list[str], assets_by_key: dict[str, AssetDocument]) -> list[str]:
+        """Generate URLs to crawl from domains and discovered assets."""
         urls: set[str] = {f"https://{domain}" for domain in domains}
         urls.update(asset.url for asset in assets_by_key.values() if asset.url)
+
+        # Generate URLs for IP-based assets with web ports
+        web_ports = {80, 443, 8080, 8443, 3000, 5000, 8000}
+        for asset in assets_by_key.values():
+            if asset.ip and not asset.url:
+                for port in asset.open_ports:
+                    if port in web_ports:
+                        scheme = "https" if port in {443, 8443} else "http"
+                        port_suffix = "" if port in {80, 443} else f":{port}"
+                        urls.add(f"{scheme}://{asset.ip}{port_suffix}")
+
         return sorted(url for url in urls if url)
 
     @staticmethod
