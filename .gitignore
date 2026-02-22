@@ -39,6 +39,12 @@ build/
 *.egg
 .pytest_cache/
 
+# Next.js
+frontend/.next/
+frontend/out/
+frontend/node_modules/
+frontend/.vercel/
+
 # Logs
 *.log
 
