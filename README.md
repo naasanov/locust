@@ -1,7 +1,10 @@
 # Locust
 
 ***HACKUNCP 2026 Winner: Cybersecurity Track***
+
 Nicolas Asanov, Abhimanyu Agashe, Vidur Shah, Arya Venkatesan
+
+<br>
 
 An autonomous, agent-to-agent (A2A) cybersecurity platform that chains together **reconnaissance**, **exploitation**, and **lateral movement** agents to map and probe an attack surface end to end — without human guidance.
 
